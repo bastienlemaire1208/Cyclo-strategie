@@ -1,1 +1,4 @@
-pandas>=2.0.0
+streamlit
+pandas
+requests
+python-dotenv
