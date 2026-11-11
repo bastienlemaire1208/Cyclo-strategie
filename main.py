@@ -10,6 +10,10 @@ def parse_gpx(file_obj):
     tree = ET.parse(file_obj)
     root = tree.getroot()
     
+    # Extraction dynamique du namespace du fichier GPX
+    ns = {'gpx': root.tag.split('}')[0].strip('{')} if '}' in root.tag else {}
+    tag_path = './/{http://www.topografix.com/GPX/1/1}trkpt' if ns else './/trkpt'
+    
     data = []
     for trkpt in root.iter('{http://www.topografix.com/GPX/1/1}trkpt'):
         lat = float(trkpt.attrib['lat'])
@@ -34,8 +38,11 @@ def parse_gpx(file_obj):
     return df
 
 if uploaded_file is not None:
-    df_gpx = parse_gpx(uploaded_file)
-    st.success("Fichier GPX chargé avec succès !")
-    st.write(df_gpx.head())
+    try:
+        df_gpx = parse_gpx(uploaded_file)
+        st.success(f"Fichier chargé avec succès ! {len(df_gpx)} points détectés.")
+        st.write(df_gpx.head())
+    except Exception as e:
+        st.error(f"Erreur lors de la lecture du fichier : {e}")
 else:
     st.info("Envoie un fichier GPX pour commencer l'analyse.")
