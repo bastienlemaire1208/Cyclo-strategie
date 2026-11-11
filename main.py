@@ -1,8 +1,13 @@
+import streamlit as st
 import xml.etree.ElementTree as ET
 import pandas as pd
 
-def parse_gpx(file_path):
-    tree = ET.parse(file_path)
+st.title("Analyseur de Trace GPX")
+
+uploaded_file = st.file_uploader("Dépose ton fichier GPX ici", type=["gpx"])
+
+def parse_gpx(file_obj):
+    tree = ET.parse(file_obj)
     root = tree.getroot()
     
     data = []
@@ -28,12 +33,9 @@ def parse_gpx(file_path):
         df.set_index('time', inplace=True)
     return df
 
-if __name__ == '__main__':
-    # Exemple d'utilisation : remplacez 'sortie.gpx' par le chemin de votre fichier
-    file_path = 'sortie.gpx'
-    try:
-        df_gpx = parse_gpx(file_path)
-        print(df_gpx.head())
-    except FileNotFoundError:
-        print(f"Fichier {file_path} introuvable.")
-
+if uploaded_file is not None:
+    df_gpx = parse_gpx(uploaded_file)
+    st.success("Fichier GPX chargé avec succès !")
+    st.write(df_gpx.head())
+else:
+    st.info("Envoie un fichier GPX pour commencer l'analyse.")
