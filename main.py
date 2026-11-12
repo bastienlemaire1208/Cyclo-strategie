@@ -19,8 +19,10 @@ def get_intervals_data():
   auth = ("API_KEY", API_KEY)
   default_ftp, default_weight, default_sv1 = 280, 68.0, 210
   power_curve = {}
+  weather_temp = 20  # Température par défaut en °C
   logs = []
 
+  # 1. Profil & Poids
   res_prof = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}", auth=auth)
   if res_prof.status_code == 200:
     data = res_prof.json()
@@ -29,8 +31,9 @@ def get_intervals_data():
     )
     logs.append(f"✅ Poids récupéré : {default_weight} kg")
   else:
-    logs.append("⚠️ Échec profil, utilisation de la valeur par défaut.")
+    logs.append("⚠️ Échec profil, utilisation du poids par défaut.")
 
+  # 2. Paramètres de sport (FTP)
   res_settings = requests.get(
       f"{BASE_URL}/athlete/{ATHLETE_ID}/settings", auth=auth
   )
@@ -43,8 +46,9 @@ def get_intervals_data():
         logs.append(f"✅ FTP Cyclisme récupérée : {default_ftp} W")
         break
   else:
-    logs.append("⚠️ Échec settings, utilisation de la valeur par défaut.")
+    logs.append("⚠️ Échec settings, utilisation de la FTP par défaut.")
 
+  # 3. Zones de puissance (SV1)
   res_zones = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}/zones", auth=auth)
   if res_zones.status_code == 200:
     for zone_set in res_zones.json():
@@ -56,8 +60,9 @@ def get_intervals_data():
           )
           logs.append(f"✅ SV1 récupéré : {default_sv1} W")
   else:
-    logs.append("⚠️ Échec zones, utilisation de la valeur par défaut.")
+    logs.append("⚠️ Échec zones, utilisation du SV1 par défaut.")
 
+  # 4. Courbe de puissance All-Time
   res_curves = requests.get(
       f"{BASE_URL}/athlete/{ATHLETE_ID}/power-curves?curves=all&type=Ride",
       auth=auth,
@@ -74,10 +79,31 @@ def get_intervals_data():
   else:
     logs.append("⚠️ Échec courbe de puissance.")
 
-  return default_ftp, default_weight, default_sv1, power_curve, logs
+  # 5. Météo depuis Intervals.icu (/weather-config ou prévisions)
+  res_weather = requests.get(
+      f"{BASE_URL}/athlete/{ATHLETE_ID}/weather-config", auth=auth
+  )
+  if res_weather.status_code == 200:
+    w_data = res_weather.json()
+    forecasts = w_data.get("forecasts", [])
+    if forecasts:
+      logs.append(
+          f"✅ Configuration météo Intervals récupérée ({len(forecasts)}"
+          " lieu(x))."
+      )
+      # On peut extraire des indications si présentes, sinon température par défaut ajustée
+    else:
+      logs.append(
+          "ℹ️ Aucune configuration météo spécifique trouvée sur Intervals, util."
+          " standard (20°C)."
+      )
+  else:
+    logs.append("⚠️ Échec récupération météo Intervals.")
+
+  return default_ftp, default_weight, default_sv1, power_curve, weather_temp, logs
 
 
-fetched_ftp, fetched_weight, fetched_sv1, power_curve, api_logs = (
+fetched_ftp, fetched_weight, fetched_sv1, power_curve, base_temp, api_logs = (
     get_intervals_data()
 )
 
@@ -118,6 +144,11 @@ weight = st.sidebar.number_input(
 )
 sv1_power = st.sidebar.number_input("SV1 (W)", value=fetched_sv1, step=1)
 
+st.sidebar.header("Météo & Environnement")
+ambient_temp = st.sidebar.slider(
+    "Température extérieure estimée (°C)", min_value=0, max_value=40, value=base_temp
+)
+
 st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
@@ -134,10 +165,15 @@ time_on_flat = (distance - (elevation / 100)) / 30
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
 total_hours = max(0.5, time_on_flat + time_on_climb)
 
-carbs_per_hour = 80 if target_power > sv1_power else 60
+# Ajustement nutritionnel et hydrique selon l'intensité et la température
+temp_factor = max(1.0, 1.0 + (ambient_temp - 20) * 0.023)
+carbs_per_hour = 90 if target_power > sv1_power else 70
 total_carbs = int(total_hours * carbs_per_hour)
-total_water_liters = round(total_hours * 0.7, 1)
 
+water_per_hour_ml = int(600 * temp_factor)
+total_water_liters = round((total_hours * water_per_hour_ml) / 1000, 1)
+
+# Affichage des métriques sans aucune flèche (pas de delta)
 col1, col2, col3, col4 = st.columns(4)
 with col1:
   st.metric(
@@ -145,11 +181,15 @@ with col1:
       f"{int(total_hours)}h {int((total_hours % 1) * 60):02d}min",
   )
 with col2:
-  st.metric("Puissance Cible", f"{target_power} W", f"{w_kg:.1f} W/kg")
+  st.metric("Puissance Cible", f"{target_power} W")
 with col3:
-  st.metric("VAM Estimée", f"{estimated_vam} m/h")
+  st.metric("Glucides", f"{total_carbs} g", help=f"~{carbs_per_hour} g/h")
 with col4:
-  st.metric("Ravitaillement", f"{total_carbs} g", f"{total_water_liters} L")
+  st.metric(
+      "Hydratation",
+      f"{total_water_liters} L",
+      help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
+  )
 
 if power_curve:
   st.subheader("Records de puissance (All-Time Intervals.icu)")
@@ -160,7 +200,7 @@ if power_curve:
 
   rc1, rc2, rc3, rc4 = st.columns(4)
   rc1.metric("Max 5s", f"{p5s} W" if isinstance(p5s, (int, float)) else p5s)
-  rc2.Metric("Max 1min", f"{p1m} W" if isinstance(p1m, (int, float)) else p1m)
+  rc2.metric("Max 1min", f"{p1m} W" if isinstance(p1m, (int, float)) else p1m)
   rc3.metric("Max 5min", f"{p5m} W" if isinstance(p5m, (int, float)) else p5m)
   rc4.metric("Max 20min", f"{p20m} W" if isinstance(p20m, (int, float)) else p20m)
 
