@@ -58,6 +58,39 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
+# Gestion de la persistance en mémoire pour le CSV des records
+if "power_records" not in st.session_state:
+  st.session_state.power_records = {
+      "5s": 846,
+      "1min": 588,
+      "5min": 328,
+      "20min": 301,
+  }
+
+st.sidebar.header("Records de puissance (CSV)")
+csv_file = st.sidebar.file_uploader(
+    "Dépose ton CSV « Meilleurs efforts »", type=["csv"]
+)
+
+if csv_file is not None:
+  try:
+    df_csv = pd.read_csv(csv_file)
+    if "Secs" in df_csv.columns and "Watts" in df_csv.columns:
+      for _, row in df_csv.iterrows():
+        secs = row["Secs"]
+        watts = row["Watts"]
+        if secs == 5:
+          st.session_state.power_records["5s"] = int(watts)
+        elif secs == 60:
+          st.session_state.power_records["1min"] = int(watts)
+        elif secs == 300:
+          st.session_state.power_records["5min"] = int(watts)
+        elif secs == 1200:
+          st.session_state.power_records["20min"] = int(watts)
+    st.sidebar.success("✅ Records mis à jour et mémorisés")
+  except Exception:
+    st.sidebar.error("Erreur de lecture du format CSV.")
+
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
 distance_km, elevation_m, climbs_info = 100.0, 1500.0, []
