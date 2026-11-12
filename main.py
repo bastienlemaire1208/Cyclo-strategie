@@ -60,16 +60,13 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
-# Gestion de la persistance disque et session pour les records
 if "power_records" not in st.session_state:
-  # Valeurs par défaut de secours
   st.session_state.power_records = {
       "5s": 1099,
       "1min": 614,
       "5min": 374,
       "20min": 301,
   }
-  # Si un fichier sauvegardé existe déjà sur le disque, on le charge
   if os.path.exists(CACHE_RECORDS_PATH):
     try:
       df_saved = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine="python")
@@ -96,7 +93,6 @@ csv_file = st.sidebar.file_uploader(
 
 if csv_file is not None:
   try:
-    # Sauvegarde physique du nouveau fichier sur le disque
     with open(CACHE_RECORDS_PATH, "wb") as f:
       f.write(csv_file.getbuffer())
 
@@ -116,16 +112,8 @@ if csv_file is not None:
         elif secs == 1200:
           st.session_state.power_records["20min"] = int(watts)
       st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés")
-    else:
-      st.sidebar.warning(
-          "⚠️ Format non reconnu : colonnes 'Secs' et 'Watts' attendues."
-      )
   except Exception as e:
     st.sidebar.error(f"Erreur de lecture du fichier : {e}")
-elif os.path.exists(CACHE_RECORDS_PATH):
-  st.sidebar.info(
-      "📁 Meilleurs efforts chargés depuis la dernière sauvegarde."
-  )
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
@@ -175,19 +163,23 @@ p20 = st.session_state.power_records["20min"]
 cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
 
-estimated_duration_hours_rough = (distance / 27) + (elevation / 1000 * 0.4)
-if estimated_duration_hours_rough > 4:
-  target_power = int(cp * 0.90)
-elif estimated_duration_hours_rough > 2:
-  target_power = int(cp * 0.95)
-else:
-  target_power = int(cp)
-
-w_kg = target_power / weight if weight and weight > 0 else 4.0
-estimated_vam = int(w_kg * 140) + 350
-time_on_flat = (distance - (elevation / 100)) / 30
+# Estimation réaliste de la durée basée sur un rendement global modéré en course
+w_kg = cp / weight if weight and weight > 0 else 4.0
+estimated_vam = int(w_kg * 120) + 300
+time_on_flat = (distance - (elevation / 100)) / 28
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
-total_hours = max(0.5, time_on_flat + time_on_climb)
+total_hours = max(1.0, time_on_flat + time_on_climb)
+
+# Ajustement scientifique de la Puissance Normalisée (PN) cible globale :
+# En course, la PN s'articule autour du SV1 et décroît logiquement selon la durée totale estimée
+if total_hours > 4.0:
+  target_power = int(sv1_power * 0.90)
+elif total_hours > 2.5:
+  target_power = int(sv1_power * 0.98)
+elif total_hours > 1.5:
+  target_power = int(sv1_power * 1.05)
+else:
+  target_power = int(cp * 0.95)
 
 water_per_hour_ml = int(550 + (ambient_temp - 20) * 25)
 water_per_hour_ml = max(300, water_per_hour_ml)
@@ -224,7 +216,7 @@ if climbs_info:
   st.subheader("Cols et côtes répertoriés (Modèle CP / W')")
   for climb in climbs_info:
     t_climb_sec = 900
-    climb_target_w = int((cp + (w_prime / t_climb_sec)) * 0.92)
+    climb_target_w = int((cp + (w_prime / t_climb_sec)) * 0.90)
     st.markdown(
         f"— **{climb}** : cible optimale modélisée ~{climb_target_w} W"
     )
