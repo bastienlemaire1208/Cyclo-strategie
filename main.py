@@ -120,7 +120,13 @@ elif os.path.exists(CACHE_RECORDS_PATH):
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
-distance_km, elevation_m, detected_climbs, flat_sections = 100.0, 1500.0, [], []
+distance_km, elevation_m, detected_climbs, flat_sections = (
+    100.0,
+    1500.0,
+    [],
+    [],
+)
+map_points = []
 
 if uploaded_file is not None:
   gpx = gpxpy.parse(uploaded_file)
@@ -131,6 +137,7 @@ if uploaded_file is not None:
   for track in gpx.tracks:
     for segment in track.segments:
       for point in segment.points:
+        map_points.append({"lat": point.latitude, "lon": point.longitude})
         if prev_point:
           d = prev_point.distance_3d(point) or 0
           total_distance += d
@@ -165,7 +172,6 @@ if uploaded_file is not None:
       d_elev = pt["d_elev"]
       grad = (d_elev / max(d_dist, 0.0001)) * 100 if d_dist > 0 else 0
 
-      # Détection des côtes (>= 1km, >= 3%)
       is_ascending = d_elev > 0 or (d_dist > 0 and grad >= 0.5)
       if is_ascending:
         if not in_climb:
@@ -190,11 +196,11 @@ if uploaded_file is not None:
                       "dist": round(current_dist, 2),
                       "elev": round(max(current_elev, 0)),
                       "grad": round(avg_grad, 1),
+                      "start_km": round(climb_start, 1),
                   }
               )
           in_climb = False
 
-      # Détection des portions plates (hors descentes < -2% et distance > 1km)
       is_flat_or_rolling = grad >= -2.0
       if is_flat_or_rolling:
         if not in_flat:
@@ -277,13 +283,19 @@ with col4:
       help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
   )
 
-# Puissance sur les portions plates
-flat_target_w = int(sv1_power * 0.92)
+flat_target_w = int(sv1_power * 0.90)
+
+st.subheader("Visualisation du parcours (GPS)")
+if map_points:
+  df_map = pd.DataFrame(map_points)
+  st.map(df_map, zoom=10, use_container_width=True)
+else:
+  st.info("📁 Dépose un fichier GPX pour afficher la carte interactive.")
 
 st.subheader("Stratégie sur les portions plates (> 1 km)")
 st.markdown(
     f"Sur les sections planes et faux-plats (hors descentes prononcées), maintenir"
-    f" une puissance stable de **{flat_target_w} W** (environ 92% du SV1) pour"
+    f" une puissance stable de **{flat_target_w} W** (environ 90% du SV1) pour"
     " préserver l'intégrité musculaire tout en roulant dans le rythme du"
     " groupe."
 )
@@ -291,7 +303,6 @@ st.markdown(
 if detected_climbs:
   st.subheader("Cols et côtes répertoriés (Modèle CP / W' & Difficulté)")
 
-  # Calcul des scores normalisés 50-50 (Distance & Pente) pour l'attribution des couleurs
   max_dist = max([c["dist"] for c in detected_climbs]) if detected_climbs else 1
   max_grad = max([c["grad"] for c in detected_climbs]) if detected_climbs else 1
 
@@ -310,7 +321,18 @@ if detected_climbs:
     climb_duration_sec = max(
         300, int((climb["elev"] / max(estimated_vam, 100)) * 3600)
     )
-    climb_target_w = int((cp + (w_prime / climb_duration_sec)) * 0.90)
+
+    # Facteur adaptatif entre 0.85 et 0.90 selon l'avancement (progression sur la distance) et la longueur
+    progress_ratio = (
+        climb.get("start_km", 0) / distance if distance > 0 else 0.5
+    )
+    # Plus la côte est longue et tardive dans la course, plus le facteur descend vers 0.85
+    factor = 0.90 - 0.05 * (
+        (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
+    )
+    factor = max(0.85, min(0.90, factor))
+
+    climb_target_w = int((cp + (w_prime / climb_duration_sec)) * factor)
     climb_vam = (
         int((climb["elev"] / (climb_duration_sec / 3600)))
         if climb_duration_sec > 0
