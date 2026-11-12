@@ -61,7 +61,6 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
-# Gestion de la persistance disque et session pour les records
 if "power_records" not in st.session_state:
   st.session_state.power_records = {
       "5s": 1099,
@@ -116,8 +115,6 @@ if csv_file is not None:
       st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés")
   except Exception as e:
     st.sidebar.error(f"Erreur de lecture du fichier : {e}")
-elif os.path.exists(CACHE_RECORDS_PATH):
-  st.sidebar.info("📁 Meilleurs efforts chargés depuis la dernière sauvegarde.")
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
@@ -142,7 +139,7 @@ if uploaded_file is not None:
               {
                   "dist": total_distance / 1000.0,
                   "elev": point.elevation or 0,
-                  "d_dist": d,
+                  "d_dist": d / 1000.0,
                   "d_elev": diff if diff > 0 else 0,
               }
           )
@@ -151,48 +148,45 @@ if uploaded_file is not None:
   distance_km = round(total_distance / 1000, 1)
   elevation_m = round(elevation_gain)
 
-  if len(points_data) > 10:
-    df_gpx = pd.DataFrame(points_data)
-    df_gpx["elev_smooth"] = df_gpx["elev"].rolling(window=15, center=True).mean()
-
-    in_climb = False
+  # Détection stricte : longueur >= 1 km et pente moyenne >= 3%
+  if len(points_data) > 20:
+    current_dist = 0
+    current_elev = 0
     climb_start = 0
-    climb_dist = 0
-    climb_elev = 0
+    in_climb = False
 
-    for i in range(10, len(df_gpx)):
-      sub = df_gpx.iloc[i - 10 : i]
-      seg_dist = sub["d_dist"].sum()
-      seg_elev = sub["d_elev"].sum()
-      if seg_dist > 0:
-        grad = (seg_elev / seg_dist) * 100
-        if grad >= 3.0 and not in_climb:
+    for pt in points_data:
+      # On considère qu'on monte si la pente locale est positive
+      is_ascending = pt["d_elev"] > 0 or (
+          pt["d_dist"] > 0
+          and (pt["d_elev"] / max(pt["d_dist"], 0.001)) * 100 >= 0.5
+      )
+
+      if is_ascending:
+        if not in_climb:
           in_climb = True
-          climb_start = df_gpx.iloc[i - 10]["dist"]
-          climb_dist = 0
-          climb_elev = 0
-        elif in_climb:
-          climb_dist += sub["d_dist"].iloc[-1]
-          climb_elev += sub["d_elev"].iloc[-1]
-          if grad < 1.5 or i == len(df_gpx) - 1:
-            if climb_dist >= 0.8:
-              avg_grad = (
-                  (climb_elev / (climb_dist * 1000)) * 100
-                  if climb_dist > 0
-                  else 0
-              )
+          climb_start = pt["dist"]
+          current_dist = 0
+          current_elev = 0
+        current_dist += pt["d_dist"]
+        current_elev += pt["d_elev"]
+      else:
+        if in_climb:
+          if current_dist >= 1.0:
+            avg_grad = (current_elev / (current_dist * 1000)) * 100
+            if avg_grad >= 3.0:
               detected_climbs.append(
                   {
                       "name": (
-                          f"Montée #{len(detected_climbs)+1} "
-                          f"({climb_start:.1f} km)"
+                          f"Côte {len(detected_climbs)+1} ({climb_start:.1f}"
+                          " km)"
                       ),
-                      "dist": round(climb_dist, 2),
-                      "elev": round(climb_elev),
+                      "dist": round(current_dist, 2),
+                      "elev": round(current_elev),
                       "grad": round(avg_grad, 1),
                   }
               )
-            in_climb = False
+          in_climb = False
 
 st.sidebar.header("Paramètres physiologiques")
 ftp = st.sidebar.number_input("FTP (W)", value=fetched_ftp, step=1)
@@ -210,7 +204,6 @@ st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
 
-# Modélisation CP / W'
 p5 = st.session_state.power_records["5min"]
 p20 = st.session_state.power_records["20min"]
 cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
@@ -263,11 +256,13 @@ with col4:
   )
 
 if detected_climbs:
-  st.subheader("Côtes et cols détectés (Modèle CP / W')")
+  st.subheader("Côtes et cols répertoriés (Modèle CP / W')")
   for climb in detected_climbs:
-    climb_duration_sec = max(300, int((climb["elev"] / estimated_vam) * 3600))
+    climb_duration_sec = max(
+        300, int((climb["elev"] / estimated_vam) * 3600)
+    )
     climb_target_w = int((cp + (w_prime / climb_duration_sec)) * 0.90)
     st.markdown(
-        f"— **{climb['name']}** : {climb['dist']} km | +{climb['elev']} m D+ |"
-        f" Pente moy. {climb['grad']}% — **Cible : ~{climb_target_w} W**"
+        f"**{climb['name']}** : {climb['dist']} km | +{climb['elev']} m D+ |"
+        f" Pente moy. {climb['grad']}% — Cible : **{climb_target_w} W**"
     )
