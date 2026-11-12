@@ -186,5 +186,5 @@ with col4:
 
 if climbs_info:
   st.subheader("Cols et côtes répertoriés (GPX)")
-  For climb in climbs_info:
+  for climb in climbs_info:
     st.markdown(f"— **{climb}**")
