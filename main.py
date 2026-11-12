@@ -1,5 +1,8 @@
 import os
 import gpxpy
+import matplotlib
+
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -9,117 +12,119 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("INTERVALS_API_KEY")
-ATHLETE_ID = os.getenv("INTERVALS_ATHLETE_ID")
-BASE_URL = "https://intervals.icu/api/v1"
+API_KEY = os.getenv('INTERVALS_API_KEY')
+ATHLETE_ID = os.getenv('INTERVALS_ATHLETE_ID')
+BASE_URL = 'https://intervals.icu/api/v1'
 
-CACHE_RECORDS_PATH = "saved_power_records.csv"
+CACHE_RECORDS_PATH = 'saved_power_records.csv'
 
-st.title("Planificateur de Course Vélo")
+st.title('Planificateur de Course Vélo')
 
 
 @st.cache_data
 def get_intervals_data():
-  auth = ("API_KEY", API_KEY)
+  auth = ('API_KEY', API_KEY)
   default_ftp, default_weight, default_sv1 = 280, 68.0, 210
   logs = []
 
-  res_prof = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}", auth=auth)
+  res_prof = requests.get(f'{BASE_URL}/athlete/{ATHLETE_ID}', auth=auth)
   if res_prof.status_code == 200:
     data = res_prof.json()
     default_weight = float(
-        data.get("weight") or data.get("icu_weight") or default_weight
+        data.get('weight') or data.get('icu_weight') or default_weight
     )
-    default_ftp = int(data.get("ftp") or default_ftp)
+    default_ftp = int(data.get('ftp') or default_ftp)
     logs.append(
-        f"✅ Profil récupéré — Poids : {default_weight} kg | FTP : {default_ftp}"
-        " W"
+        f'✅ Profil récupéré — Poids : {default_weight} kg | FTP : {default_ftp}'
+        ' W'
     )
   else:
-    logs.append("⚠️ Échec profil, valeurs par défaut.")
+    logs.append('⚠️ Échec profil, valeurs par défaut.')
 
-  res_zones = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}/zones", auth=auth)
+  res_zones = requests.get(f'{BASE_URL}/athlete/{ATHLETE_ID}/zones', auth=auth)
   if res_zones.status_code == 200:
     for zone_set in res_zones.json():
-      if zone_set.get("type") == "PWR":
-        intervals = zone_set.get("value", [])
+      if zone_set.get('type') == 'PWR':
+        intervals = zone_set.get('value', [])
         if len(intervals) >= 2:
           default_sv1 = int(
-              intervals[1].get("max") or int(default_ftp * 0.75)
+              intervals[1].get('max') or int(default_ftp * 0.75)
           )
-          logs.append(f"✅ SV1 récupéré : {default_sv1} W")
+          logs.append(f'✅ SV1 récupéré : {default_sv1} W')
         break
   else:
     default_sv1 = int(default_ftp * 0.75)
-    logs.append("⚠️ Échec zones, SV1 estimé à 75 % FTP.")
+    logs.append('⚠️ Échec zones, SV1 estimé à 75 % FTP.')
 
   return default_ftp, default_weight, default_sv1, logs
 
 
 fetched_ftp, fetched_weight, fetched_sv1, api_logs = get_intervals_data()
 
-with st.expander("Logs de validation Intervals.icu", expanded=False):
+with st.expander('Logs de validation Intervals.icu', expanded=False):
   for log in api_logs:
     st.write(log)
 
-if "power_records" not in st.session_state:
+if 'power_records' not in st.session_state:
   st.session_state.power_records = {
-      "5s": 1099,
-      "1min": 614,
-      "5min": 374,
-      "20min": 301,
+      '5s': 1099,
+      '1min': 614,
+      '5min': 374,
+      '20min': 301,
   }
   if os.path.exists(CACHE_RECORDS_PATH):
     try:
-      df_saved = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine="python")
+      df_saved = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine='python')
       df_saved.columns = [str(col).strip().lower() for col in df_saved.columns]
-      if "secs" in df_saved.columns and "watts" in df_saved.columns:
+      if 'secs' in df_saved.columns and 'watts' in df_saved.columns:
         for _, row in df_saved.iterrows():
-          secs = row["secs"]
-          watts = row["watts"]
+          secs = row['secs']
+          watts = row['watts']
           if secs == 5:
-            st.session_state.power_records["5s"] = int(watts)
+            st.session_state.power_records['5s'] = int(watts)
           elif secs == 60:
-            st.session_state.power_records["1min"] = int(watts)
+            st.session_state.power_records['1min'] = int(watts)
           elif secs == 300:
-            st.session_state.power_records["5min"] = int(watts)
+            st.session_state.power_records['5min'] = int(watts)
           elif secs == 1200:
-            st.session_state.power_records["20min"] = int(watts)
+            st.session_state.power_records['20min'] = int(watts)
     except Exception:
       pass
 
-st.sidebar.header("Records de puissance (CSV)")
+st.sidebar.header('Records de puissance (CSV)')
 csv_file = st.sidebar.file_uploader(
-    "Dépose ton CSV « Meilleurs efforts » (optionnel)"
+    'Dépose ton CSV « Meilleurs efforts » (optionnel)'
 )
 
 if csv_file is not None:
   try:
-    with open(CACHE_RECORDS_PATH, "wb") as f:
+    with open(CACHE_RECORDS_PATH, 'wb') as f:
       f.write(csv_file.getbuffer())
 
-    df_csv = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine="python")
+    df_csv = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine='python')
     df_csv.columns = [str(col).strip().lower() for col in df_csv.columns]
 
-    if "secs" in df_csv.columns and "watts" in df_csv.columns:
+    if 'secs' in df_csv.columns and 'watts' in df_csv.columns:
       for _, row in df_csv.iterrows():
-        secs = row["secs"]
-        watts = row["watts"]
+        secs = row['secs']
+        watts = row['watts']
         if secs == 5:
-          st.session_state.power_records["5s"] = int(watts)
+          st.session_state.power_records['5s'] = int(watts)
         elif secs == 60:
-          st.session_state.power_records["1min"] = int(watts)
+          st.session_state.power_records['1min'] = int(watts)
         elif secs == 300:
-          st.session_state.power_records["5min"] = int(watts)
+          st.session_state.power_records['5min'] = int(watts)
         elif secs == 1200:
-          st.session_state.power_records["20min"] = int(watts)
-      st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés sur disque")
+          st.session_state.power_records['20min'] = int(watts)
+      st.sidebar.success(
+          '✅ Nouveaux records enregistrés et mémorisés sur disque'
+      )
   except Exception as e:
-    st.sidebar.error(f"Erreur de lecture du fichier : {e}")
+    st.sidebar.error(f'Erreur de lecture du fichier : {e}')
 elif os.path.exists(CACHE_RECORDS_PATH):
-  st.sidebar.info("📁 Records chargés depuis la sauvegarde locale.")
+  st.sidebar.info('📁 Records chargés depuis la sauvegarde locale.')
 
-uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
+uploaded_file = st.file_uploader('Dépose ton fichier GPX (Komoot)', type=['gpx'])
 
 distance_km, elevation_m, detected_climbs, flat_sections = (
     100.0,
@@ -128,24 +133,17 @@ distance_km, elevation_m, detected_climbs, flat_sections = (
     [],
 )
 map_points = []
-raw_gpx_points = []
+points_data = []
 
 if uploaded_file is not None:
   gpx = gpxpy.parse(uploaded_file)
   total_distance, elevation_gain = 0, 0
   prev_point = None
-  points_data = []
 
   for track in gpx.tracks:
     for segment in track.segments:
       for point in segment.points:
-        map_points.append({"lat": point.latitude, "lon": point.longitude})
-        raw_gpx_points.append(
-            {
-                "dist": total_distance / 1000.0 if prev_point else 0.0,
-                "elev": point.elevation or 0.0,
-            }
-        )
+        map_points.append({'lat': point.latitude, 'lon': point.longitude})
         if prev_point:
           d = prev_point.distance_3d(point) or 0
           total_distance += d
@@ -154,10 +152,10 @@ if uploaded_file is not None:
             elevation_gain += diff
           points_data.append(
               {
-                  "dist": total_distance / 1000.0,
-                  "elev": point.elevation or 0,
-                  "d_dist": d / 1000.0,
-                  "d_elev": diff,
+                  'dist': total_distance / 1000.0,
+                  'elev': point.elevation or 0.0,
+                  'd_dist': d / 1000.0,
+                  'd_elev': diff,
               }
           )
         prev_point = point
@@ -177,15 +175,15 @@ if uploaded_file is not None:
     in_flat = False
 
     for idx, pt in enumerate(points_data):
-      d_dist = pt["d_dist"]
-      d_elev = pt["d_elev"]
+      d_dist = pt['d_dist']
+      d_elev = pt['d_elev']
       grad = (d_elev / max(d_dist, 0.0001)) * 100 if d_dist > 0 else 0
 
       is_ascending = d_elev > 0 or (d_dist > 0 and grad >= 0.5)
       if is_ascending:
         if not in_climb:
           in_climb = True
-          climb_start = pt["dist"]
+          climb_start = pt['dist']
           current_dist = 0
           current_elev = 0
           climb_pts_indices = []
@@ -200,15 +198,15 @@ if uploaded_file is not None:
             if avg_grad >= 3.0:
               detected_climbs.append(
                   {
-                      "name": (
-                          f"Côte {len(detected_climbs)+1} ({climb_start:.1f}"
-                          " km)"
+                      'name': (
+                          f'Côte {len(detected_climbs)+1} ({climb_start:.1f}'
+                          ' km)'
                       ),
-                      "dist": round(current_dist, 2),
-                      "elev": round(max(current_elev, 0)),
-                      "grad": round(avg_grad, 1),
-                      "start_km": round(climb_start, 1),
-                      "indices": climb_pts_indices.copy(),
+                      'dist': round(current_dist, 2),
+                      'elev': round(max(current_elev, 0)),
+                      'grad': round(avg_grad, 1),
+                      'start_km': round(climb_start, 1),
+                      'indices': climb_pts_indices.copy(),
                   }
               )
           in_climb = False
@@ -217,35 +215,35 @@ if uploaded_file is not None:
       if is_flat_or_rolling:
         if not in_flat:
           in_flat = True
-          flat_start = pt["dist"]
+          flat_start = pt['dist']
           flat_dist = 0
         flat_dist += d_dist
       else:
         if in_flat:
           if flat_dist >= 1.0:
             flat_sections.append(
-                {"start": round(flat_start, 1), "dist": round(flat_dist, 1)}
+                {'start': round(flat_start, 1), 'dist': round(flat_dist, 1)}
             )
           in_flat = False
 
-st.sidebar.header("Paramètres physiologiques")
-ftp = st.sidebar.number_input("FTP (W)", value=fetched_ftp, step=1)
+st.sidebar.header('Paramètres physiologiques')
+ftp = st.sidebar.number_input('FTP (W)', value=fetched_ftp, step=1)
 weight = st.sidebar.number_input(
-    "Poids (kg)", value=fetched_weight, step=0.1, format="%.1f"
+    'Poids (kg)', value=fetched_weight, step=0.1, format='%.1f'
 )
-sv1_power = st.sidebar.number_input("SV1 (W)", value=fetched_sv1, step=1)
+sv1_power = st.sidebar.number_input('SV1 (W)', value=fetched_sv1, step=1)
 
-st.sidebar.header("Météo & Environnement")
+st.sidebar.header('Météo & Environnement')
 ambient_temp = st.sidebar.slider(
-    "Température extérieure estimée (°C)", min_value=0, max_value=40, value=20
+    'Température extérieure estimée (°C)', min_value=0, max_value=40, value=20
 )
 
-st.sidebar.header("Paramètres de course")
-distance = st.sidebar.number_input("Distance (km)", value=distance_km)
-elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
+st.sidebar.header('Paramètres de course')
+distance = st.sidebar.number_input('Distance (km)', value=distance_km)
+elevation = st.sidebar.number_input('Dénivelé positif (m D+)', value=elevation_m)
 
-p5 = st.session_state.power_records["5min"]
-p20 = st.session_state.power_records["20min"]
+p5 = st.session_state.power_records['5min']
+p20 = st.session_state.power_records['20min']
 cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
 
@@ -277,129 +275,165 @@ total_carbs = int(total_hours * carbs_per_hour)
 col1, col2, col3, col4 = st.columns(4)
 with col1:
   st.metric(
-      "Temps estimé",
-      f"{int(total_hours)}h {int((total_hours % 1) * 60):02d}min",
+      'Temps estimé',
+      f'{int(total_hours)}h {int((total_hours % 1) * 60):02d}min',
   )
 with col2:
-  st.metric("Puissance Cible (PN)", f"{target_power} W")
+  st.metric('Puissance Cible (PN)', f'{target_power} W')
 with col3:
   st.metric(
-      "Glucides",
-      f"{total_carbs} g",
-      help=f"~{carbs_per_hour} g/h (Jeukendrup)",
+      'Glucides',
+      f'{total_carbs} g',
+      help=f'~{carbs_per_hour} g/h (Jeukendrup)',
   )
 with col4:
   st.metric(
-      "Hydratation",
-      f"{total_water_liters} L",
-      help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
+      'Hydratation',
+      f'{total_water_liters} L',
+      help=f'~{water_per_hour_ml} ml/h ({ambient_temp}°C)',
   )
 
 flat_target_w = int(sv1_power * 0.90)
 
-st.subheader("Visualisation du parcours (GPS)")
+st.subheader('Visualisation du parcours (GPS)')
 if map_points:
   df_map = pd.DataFrame(map_points)
   st.map(df_map, zoom=10, use_container_width=True)
 else:
-  st.info("📁 Dépose un fichier GPX pour afficher la carte interactive.")
+  st.info('📁 Dépose un fichier GPX pour afficher la carte interactive.')
 
-st.subheader("Stratégie sur les portions plates (> 1 km)")
+st.subheader('Stratégie sur les portions plates (> 1 km)')
 st.markdown(
-    f"Sur les sections planes et faux-plats (hors descentes prononcées), maintenir"
-    f" une puissance stable de **{flat_target_w} W** (environ 90% du SV1) pour"
-    " préserver l'intégrité musculaire tout en roulant dans le rythme du"
-    " groupe."
+    f'Sur les sections planes et faux-plats (hors descentes prononcées), maintenir'
+    f' une puissance stable de **{flat_target_w} W** (environ 90% du SV1) pour'
+    ' préserver l\'intégrité musculaire tout en roulant dans le rythme du'
+    ' groupe.'
 )
 
 
-# Définition de la fenêtre pop-up 3D (dialog) pour l'analyse d'une côte
-@st.dialog("Analyse 3D et Profil de la Côte", width="large")
+def get_gradient_color(grad):
+  # Code couleur Climbfinder / cyclisme par tranche de pente (%)
+  if grad < 3:
+    return '#a6cee3'  # Bleu / Facile
+  elif grad < 6:
+    return '#b2df8a'  # Vert clair (< 6%)
+  elif grad < 8:
+    return '#33a02c'  # Vert foncé (6-8%)
+  elif grad < 10:
+    return '#fb9a99'  # Orange clair (8-10%)
+  elif grad < 12:
+    return '#e31a1c'  # Rouge (10-12%)
+  else:
+    return '#6a3d9a'  # Violet / Noir (> 12%)
+
+
+@st.dialog('Profil altimétrique segmenté (Style Climbfinder)', width='large')
 def show_climb_popup(climb_name, climb_data, pts_sub):
   st.subheader(climb_name)
   st.markdown(
-      f"**Longueur** : {climb_data['dist']} km | **Dénivelé** : +"
+      f'**Longueur** : {climb_data[\'dist\']} km | **Dénivelé** : +'
       f" {climb_data['elev']} m | **Pente moyenne** : {climb_data['grad']}%"
   )
 
-  if pts_sub:
+  if pts_sub and len(pts_sub) > 5:
     fig, ax = plt.subplots(figsize=(10, 4))
-    dists = [p["dist"] for p in pts_sub]
-    elevs = [p["elev"] for p in pts_sub]
 
-    # Remplissage dégradé type 3D / Climbfinder
-    ax.fill_between(dists, elevs, min(elevs), color="orange", alpha=0.4)
-    ax.plot(dists, elevs, color="red", linewidth=2.5, label="Profil altimétrique")
+    # Découpage par segments kilométriques ou kilométriques partiels (façon blocs Climbfinder)
+    n_bars = max(
+        3, int(climb_data['dist'] * 5)
+    )  # blocs de ~200m pour un rendu détaillé
+    chunk_size = max(1, len(pts_sub) // n_bars)
 
-    ax.set_title("Profil 3D / Dénivelé de l'ascension", fontsize=12)
-    ax.set_xlabel("Distance sur la côte (km)")
-    ax.set_ylabel("Altitude (m)")
-    ax.grid(True, linestyle="--", alpha=0.5)
+    for i in range(n_bars):
+      chunk = pts_sub[i * chunk_size : (i + 1) * chunk_size]
+      if not chunk:
+        continue
+      sub_dists = [p['dist'] for p in chunk]
+      sub_elevs = [p['elev'] for p in chunk]
+
+      d_chunk = sub_dists[-1] - sub_dists[0]
+      e_chunk = sub_elevs[-1] - sub_elevs[0]
+      g_chunk = (
+          (e_chunk / (d_chunk * 1000)) * 100 if d_chunk > 0 else climb_data['grad']
+      )
+      bar_color = get_gradient_color(g_chunk)
+
+      ax.fill_between(sub_dists, sub_elevs, min(sub_elevs), color=bar_color, alpha=0.85, edgecolor='white', linewidth=0.8)
+
+    # Ligne de crête supérieure
+    all_dists = [p['dist'] for p in pts_sub]
+    all_elevs = [p['elev'] for p in pts_sub]
+    ax.plot(all_dists, all_elevs, color='#333333', linewidth=1.5)
+
+    ax.set_title(
+        f"Profil en blocs de pente — {climb_name}", fontsize=11, fontweight='bold'
+    )
+    ax.set_xlabel('Distance sur la côte (km)')
+    ax.set_ylabel('Altitude (m)')
+    ax.grid(True, linestyle='--', alpha=0.3)
     st.pyplot(fig)
   else:
-    st.info("Données altimétriques détaillées indisponibles pour cette côte.")
+    st.info('Données altimétriques insuffisantes pour le profil détaillé.')
 
-  if st.button("Fermer"):
+  if st.button('Fermer'):
     st.rerun()
 
 
 if detected_climbs:
   st.subheader(
-      "Cols et côtes répertoriés (Clique sur une côte pour l'analyse 3D)"
+      'Cols et côtes répertoriés (Clique sur une côte pour l\'analyse détaillée)'
   )
 
-  max_dist = max([c["dist"] for c in detected_climbs]) if detected_climbs else 1
-  max_grad = max([c["grad"] for c in detected_climbs]) if detected_climbs else 1
+  max_dist = max([c['dist'] for c in detected_climbs]) if detected_climbs else 1
+  max_grad = max([c['grad'] for c in detected_climbs]) if detected_climbs else 1
 
   for idx, climb in enumerate(detected_climbs):
-    norm_dist = climb["dist"] / max_dist if max_dist > 0 else 0
-    norm_grad = climb["grad"] / max_grad if max_grad > 0 else 0
+    norm_dist = climb['dist'] / max_dist if max_dist > 0 else 0
+    norm_grad = climb['grad'] / max_grad if max_grad > 0 else 0
     score = 0.5 * norm_dist + 0.5 * norm_grad
 
     if score > 0.7:
-      color, diff_label = "🔴", "Difficile"
+      color, diff_label = '🔴', 'Difficile'
     elif score > 0.35:
-      color, diff_label = "🟠", "Modérée"
+      color, diff_label = '🟠', 'Modérée'
     else:
-      color, diff_label = "🟢", "Facile"
+      color, diff_label = '🟢', 'Facile'
 
     climb_duration_sec = max(
-        300, int((climb["elev"] / max(estimated_vam, 100)) * 3600)
+        300, int((climb['elev'] / max(estimated_vam, 100)) * 3600)
     )
 
     progress_ratio = (
-        climb.get("start_km", 0) / distance if distance > 0 else 0.5
+        climb.get('start_km', 0) / distance if distance > 0 else 0.5
     )
     factor = 0.90 - 0.05 * (
-        (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
+        (climb['dist'] / 5.0) * 0.5 + progress_ratio * 0.5
     )
     factor = max(0.85, min(0.90, factor))
 
     climb_target_w = int((cp + (w_prime / climb_duration_sec)) * factor)
     climb_vam = (
-        int((climb["elev"] / (climb_duration_sec / 3600)))
+        int((climb['elev'] / (climb_duration_sec / 3600)))
         if climb_duration_sec > 0
         else estimated_vam
     )
 
-    # Affichage sous forme de bouton interactif ouvrant la pop-up
     col_btn, col_info = st.columns([0.4, 0.6])
     with col_btn:
       if st.button(
-          f"{color} {climb['name']} ({diff_label})", key=f"climb_btn_{idx}"
+          f"{color} {climb['name']} ({diff_label})", key=f'climb_btn_{idx}'
       ):
-        # Extraction des points de la côte pour le graphique 3D
-        indices = climb.get("indices", [])
+        indices = climb.get('indices', [])
         sub_pts = [points_data[i] for i in indices] if indices else []
-        show_climb_popup(climb["name"], climb, sub_pts)
+        show_climb_popup(climb['name'], climb, sub_pts)
     with col_info:
       st.markdown(
           f"📏 {climb['dist']} km | 📈 +{climb['elev']} m | 📐"
           f" {climb['grad']}% — VAM : **{climb_vam} m/h** | Cible :"
-          f" **{climb_target_w} W**"
+          f' **{climb_target_w} W**'
       )
 
-st.subheader("Stratégie Nutritionnelle & Hydratation")
+st.subheader('Stratégie Nutritionnelle & Hydratation')
 st.markdown(f"""
 * **Hydratation** : Boire régulièrement par petites gorgées toutes les 10 à 15 minutes (viser ~{water_per_hour_ml} ml/h). Commencer dès la première demi-heure, avant la sensation de soif.
 * **Glucides Liquides (Bidons)** : Apporter 60 à 90 g/h de glucides (mélange maltodextrine/fructose) directement dans les bidons pour assurer un flux énergétique constant sans encombrement gastrique.
