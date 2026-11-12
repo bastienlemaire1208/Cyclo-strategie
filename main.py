@@ -19,10 +19,9 @@ def get_intervals_data():
   auth = ("API_KEY", API_KEY)
   default_ftp, default_weight, default_sv1 = 280, 68.0, 210
   power_curve = {}
-  weather_temp = 20  # Température par défaut en °C
+  weather_temp = 20
   logs = []
 
-  # 1. Profil & Poids
   res_prof = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}", auth=auth)
   if res_prof.status_code == 200:
     data = res_prof.json()
@@ -33,7 +32,6 @@ def get_intervals_data():
   else:
     logs.append("⚠️ Échec profil, utilisation du poids par défaut.")
 
-  # 2. Paramètres de sport (FTP)
   res_settings = requests.get(
       f"{BASE_URL}/athlete/{ATHLETE_ID}/settings", auth=auth
   )
@@ -48,7 +46,6 @@ def get_intervals_data():
   else:
     logs.append("⚠️ Échec settings, utilisation de la FTP par défaut.")
 
-  # 3. Zones de puissance (SV1)
   res_zones = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}/zones", auth=auth)
   if res_zones.status_code == 200:
     for zone_set in res_zones.json():
@@ -62,7 +59,6 @@ def get_intervals_data():
   else:
     logs.append("⚠️ Échec zones, utilisation du SV1 par défaut.")
 
-  # 4. Courbe de puissance All-Time
   res_curves = requests.get(
       f"{BASE_URL}/athlete/{ATHLETE_ID}/power-curves?curves=all&type=Ride",
       auth=auth,
@@ -78,27 +74,6 @@ def get_intervals_data():
       )
   else:
     logs.append("⚠️ Échec courbe de puissance.")
-
-  # 5. Météo depuis Intervals.icu (/weather-config ou prévisions)
-  res_weather = requests.get(
-      f"{BASE_URL}/athlete/{ATHLETE_ID}/weather-config", auth=auth
-  )
-  if res_weather.status_code == 200:
-    w_data = res_weather.json()
-    forecasts = w_data.get("forecasts", [])
-    if forecasts:
-      logs.append(
-          f"✅ Configuration météo Intervals récupérée ({len(forecasts)}"
-          " lieu(x))."
-      )
-      # On peut extraire des indications si présentes, sinon température par défaut ajustée
-    else:
-      logs.append(
-          "ℹ️ Aucune configuration météo spécifique trouvée sur Intervals, util."
-          " standard (20°C)."
-      )
-  else:
-    logs.append("⚠️ Échec récupération météo Intervals.")
 
   return default_ftp, default_weight, default_sv1, power_curve, weather_temp, logs
 
@@ -152,12 +127,8 @@ ambient_temp = st.sidebar.slider(
 st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
-target_power = st.sidebar.slider(
-    "Puissance cible (W)",
-    min_value=100,
-    max_value=int(ftp * 1.5),
-    value=int(sv1_power),
-)
+
+target_power = sv1_power
 
 w_kg = target_power / weight if weight and weight > 0 else 4.0
 estimated_vam = int(w_kg * 140) + 350
@@ -165,15 +136,22 @@ time_on_flat = (distance - (elevation / 100)) / 30
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
 total_hours = max(0.5, time_on_flat + time_on_climb)
 
-# Ajustement nutritionnel et hydrique selon l'intensité et la température
-temp_factor = max(1.0, 1.0 + (ambient_temp - 20) * 0.023)
-carbs_per_hour = 90 if target_power > sv1_power else 70
-total_carbs = int(total_hours * carbs_per_hour)
-
-water_per_hour_ml = int(600 * temp_factor)
+water_per_hour_ml = int(550 + (ambient_temp - 20) * 25)
+water_per_hour_ml = max(300, water_per_hour_ml)
 total_water_liters = round((total_hours * water_per_hour_ml) / 1000, 1)
 
-# Affichage des métriques sans aucune flèche (pas de delta)
+if target_power >= sv1_power:
+  base_carbs_h = 90
+else:
+  base_carbs_h = 60
+
+if ambient_temp > 28:
+  carbs_per_hour = int(base_carbs_h * 0.85)
+else:
+  carbs_per_hour = base_carbs_h
+
+total_carbs = int(total_hours * carbs_per_hour)
+
 col1, col2, col3, col4 = st.columns(4)
 with col1:
   st.metric(
@@ -183,7 +161,11 @@ with col1:
 with col2:
   st.metric("Puissance Cible", f"{target_power} W")
 with col3:
-  st.metric("Glucides", f"{total_carbs} g", help=f"~{carbs_per_hour} g/h")
+  st.metric(
+      "Glucides",
+      f"{total_carbs} g",
+      help=f"~{carbs_per_hour} g/h (Jeukendrup)",
+  )
 with col4:
   st.metric(
       "Hydratation",
