@@ -18,80 +18,83 @@ st.title("Planificateur de Course Vélo")
 def get_intervals_data():
   auth = ("API_KEY", API_KEY)
   default_ftp, default_weight, default_sv1 = 280, 68.0, 210
-  power_curve = {}
-  weather_temp = 20
   logs = []
 
-  # 1. Récupération du profil global (contient souvent le poids et la FTP de base)
   res_prof = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}", auth=auth)
   if res_prof.status_code == 200:
     data = res_prof.json()
     default_weight = float(
         data.get("weight") or data.get("icu_weight") or default_weight
     )
-    # La FTP globale est souvent stockée ici directement
     default_ftp = int(data.get("ftp") or default_ftp)
     logs.append(
         f"✅ Profil récupéré — Poids : {default_weight} kg | FTP : {default_ftp}"
         " W"
     )
   else:
-    logs.append(
-        f"⚠️ Échec profil (Code {res_prof.status_code}), valeurs par défaut."
-    )
+    logs.append("⚠️ Échec profil, valeurs par défaut.")
 
-  # 2. Récupération des zones de puissance pour extraire SV1 (fin de Zone 2 / début Zone 3)
   res_zones = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}/zones", auth=auth)
   if res_zones.status_code == 200:
-    zones_data = res_zones.json()
-    found_pwr = False
-    for zone_set in zones_data:
+    for zone_set in res_zones.json():
       if zone_set.get("type") == "PWR":
-        found_pwr = True
         intervals = zone_set.get("value", [])
-        # En général, l'index 1 correspond à la zone 2, dont le max est SV1
         if len(intervals) >= 2:
           default_sv1 = int(
               intervals[1].get("max") or int(default_ftp * 0.75)
           )
-          logs.append(f"✅ SV1 récupéré (Z2 max) : {default_sv1} W")
+          logs.append(f"✅ SV1 récupéré : {default_sv1} W")
         break
-    if not found_pwr:
-      logs.append("⚠️ Zones de puissance 'PWR' non trouvées, calcul auto SV1.")
-      default_sv1 = int(default_ftp * 0.75)
   else:
-    logs.append(
-        f"⚠️ Échec zones (Code {res_zones.status_code}), SV1 estimé à 75% FTP."
-    )
     default_sv1 = int(default_ftp * 0.75)
+    logs.append("⚠️ Échec zones, SV1 estimé à 75 % FTP.")
 
-  # 3. Courbe de puissance All-Time
-  res_curves = requests.get(
-      f"{BASE_URL}/athlete/{ATHLETE_ID}/power-curves?curves=all&type=Ride",
-      auth=auth,
-  )
-  if res_curves.status_code == 200:
-    curves_data = res_curves.json()
-    if curves_data and isinstance(curves_data, list):
-      secs = curves_data[0].get("secs", [])
-      watts = curves_data[0].get("watts", [])
-      power_curve = dict(zip(secs, watts))
-      logs.append(
-          f"✅ Courbe de puissance chargée ({len(power_curve)} points)."
-      )
-  else:
-    logs.append(f"⚠️ Échec courbe de puissance (Code {res_curves.status_code})")
-
-  return default_ftp, default_weight, default_sv1, power_curve, weather_temp, logs
+  return default_ftp, default_weight, default_sv1, logs
 
 
-fetched_ftp, fetched_weight, fetched_sv1, power_curve, base_temp, api_logs = (
-    get_intervals_data()
-)
+fetched_ftp, fetched_weight, fetched_sv1, api_logs = get_intervals_data()
 
 with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
+
+# Gestion de la persistance en mémoire (Session State) pour le CSV des records
+if "power_records" not in st.session_state:
+  # Valeurs par défaut de secours
+  st.session_state.power_records = {
+      "5s": 846,
+      "1min": 588,
+      "5min": 328,
+      "20min": 301,
+  }
+
+st.sidebar.header("Records de puissance (CSV Intervals)")
+csv_file = st.sidebar.file_uploader(
+    "Dépose ton CSV « Meilleurs efforts »", type=["csv"]
+)
+
+if csv_file is not None:
+  try:
+    df_csv = pd.read_csv(csv_file)
+    # Parsing dynamique basé sur le format exporté par Intervals.icu
+    # On cherche les lignes correspondantes aux durées clés si colonnes présentes
+    if "Secs" in df_csv.columns and "Watts" in df_csv.columns:
+      for _, row in df_csv.iterrows():
+        secs = row["Secs"]
+        watts = row["Watts"]
+        if secs == 5:
+          st.session_state.power_records["5s"] = int(watts)
+        elif secs == 60:
+          st.session_state.power_records["1min"] = int(watts)
+        elif secs == 300:
+          st.session_state.power_records["5min"] = int(watts)
+        elif secs == 1200:
+          st.session_state.power_records["20min"] = int(watts)
+    st.sidebar.success("✅ Records mis à jour et gardés en mémoire")
+  except Exception:
+    st.sidebar.error("Erreur de lecture du format CSV.")
+
+power_records = st.session_state.power_records
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
@@ -128,14 +131,24 @@ sv1_power = st.sidebar.number_input("SV1 (W)", value=fetched_sv1, step=1)
 
 st.sidebar.header("Météo & Environnement")
 ambient_temp = st.sidebar.slider(
-    "Température extérieure estimée (°C)", min_value=0, max_value=40, value=base_temp
+    "Température extérieure estimée (°C)", min_value=0, max_value=40, value=20
 )
 
 st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
 
-target_power = sv1_power
+# Modélisation scientifique de la puissance cible globale :
+# Pondération entre le SV1 (base aérobie longue) et la puissance critique/FTP selon la distance et le D+
+# Facteur d'intensité (IF) théorique décroissant avec le volume total
+estimated_duration_hours_rough = (distance / 27) + (elevation / 1000 * 0.4)
+if estimated_duration_hours_rough > 4:
+  # Sur longue distance, la puissance cible globale s'aligne strictement sur ou sous le SV1
+  target_power = int(sv1_power * 0.95)
+elif estimated_duration_hours_rough > 2:
+  target_power = int(sv1_power)
+else:
+  target_power = int(sv1_power * 1.05)
 
 w_kg = target_power / weight if weight and weight > 0 else 4.0
 estimated_vam = int(w_kg * 140) + 350
@@ -147,16 +160,10 @@ water_per_hour_ml = int(550 + (ambient_temp - 20) * 25)
 water_per_hour_ml = max(300, water_per_hour_ml)
 total_water_liters = round((total_hours * water_per_hour_ml) / 1000, 1)
 
-if target_power >= sv1_power:
-  base_carbs_h = 90
-else:
-  base_carbs_h = 60
-
-if ambient_temp > 28:
-  carbs_per_hour = int(base_carbs_h * 0.85)
-else:
-  carbs_per_hour = base_carbs_h
-
+base_carbs_h = 90 if target_power >= sv1_power else 60
+carbs_per_hour = (
+    int(base_carbs_h * 0.85) if ambient_temp > 28 else base_carbs_h
+)
 total_carbs = int(total_hours * carbs_per_hour)
 
 col1, col2, col3, col4 = st.columns(4)
@@ -180,20 +187,20 @@ with col4:
       help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
   )
 
-if power_curve:
-  st.subheader("Records de puissance (All-Time Intervals.icu)")
-  p5s = power_curve.get(5, "N/A")
-  p1m = power_curve.get(60, "N/A")
-  p5m = power_curve.get(300, "N/A")
-  p20m = power_curve.get(1200, "N/A")
-
-  rc1, rc2, rc3, rc4 = st.columns(4)
-  rc1.metric("Max 5s", f"{p5s} W" if isinstance(p5s, (int, float)) else p5s)
-  rc2.metric("Max 1min", f"{p1m} W" if isinstance(p1m, (int, float)) else p1m)
-  rc3.metric("Max 5min", f"{p5m} W" if isinstance(p5m, (int, float)) else p5m)
-  rc4.metric("Max 20min", f"{p20m} W" if isinstance(p20m, (int, float)) else p20m)
+st.subheader("Records de puissance (All-Time Meilleurs efforts)")
+rc1, rc2, rc3, rc4 = st.columns(4)
+rc1.metric("Max 5s", f"{power_records['5s']} W")
+rc2.metric("Max 1min", f"{power_records['1min']} W")
+rc3.metric("Max 5min", f"{power_records['5min']} W")
+rc4.metric("Max 20min", f"{power_records['20min']} W")
 
 if climbs_info:
   st.subheader("Cols et côtes répertoriés (GPX)")
+  st.write(
+      "Puissances conseillées dans les ascensions basées sur les records"
+      " (20 min max sustainable) :"
+  )
   for climb in climbs_info:
-    st.markdown(f"— {climb}")
+    # Estimation de la puissance dans le col pondérée par le record 20min (facteur 0.88-0.92 pour un effort gérable en course)
+    climb_target_w = int(power_records["20min"] * 0.90)
+    st.markdown(f"— **{climb}** : cible conseillée ~{climb_target_w} W")
