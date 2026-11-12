@@ -58,23 +58,20 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
-# Gestion de la persistance en mémoire pour le CSV des records
 if "power_records" not in st.session_state:
   st.session_state.power_records = {
-      "5s": 846,
-      "1min": 588,
-      "5min": 328,
+      "5s": 1099,
+      "1min": 614,
+      "5min": 374,
       "20min": 301,
   }
 
 st.sidebar.header("Records de puissance (CSV)")
-# Suppression du filtre strict type=["csv"] pour éviter que le fichier soit grisé
 csv_file = st.sidebar.file_uploader("Dépose ton CSV « Meilleurs efforts »")
 
 if csv_file is not None:
   try:
     df_csv = pd.read_csv(csv_file, sep=None, engine="python")
-    # Normalisation des noms de colonnes en minuscules pour éviter les erreurs de casse
     df_csv.columns = [str(col).strip().lower() for col in df_csv.columns]
 
     if "secs" in df_csv.columns and "watts" in df_csv.columns:
@@ -139,13 +136,19 @@ st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
 
+# Calcul de la Puissance Critique (CP) et de W' à partir des records 5 min et 20 min
+p5 = st.session_state.power_records["5min"]
+p20 = st.session_state.power_records["20min"]
+cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
+w_prime = (p20 - cp) * 1200
+
 estimated_duration_hours_rough = (distance / 27) + (elevation / 1000 * 0.4)
 if estimated_duration_hours_rough > 4:
-  target_power = int(sv1_power * 0.95)
+  target_power = int(cp * 0.90)
 elif estimated_duration_hours_rough > 2:
-  target_power = int(sv1_power)
+  target_power = int(cp * 0.95)
 else:
-  target_power = int(sv1_power * 1.05)
+  target_power = int(cp)
 
 w_kg = target_power / weight if weight and weight > 0 else 4.0
 estimated_vam = int(w_kg * 140) + 350
@@ -170,7 +173,7 @@ with col1:
       f"{int(total_hours)}h {int((total_hours % 1) * 60):02d}min",
   )
 with col2:
-  st.metric("Puissance Cible", f"{target_power} W")
+  st.metric("Puissance Cible (PN)", f"{target_power} W")
 with col3:
   st.metric(
       "Glucides",
@@ -185,6 +188,11 @@ with col4:
   )
 
 if climbs_info:
-  st.subheader("Cols et côtes répertoriés (GPX)")
+  st.subheader("Cols et côtes répertoriés (Modèle CP / W')")
   for climb in climbs_info:
-    st.markdown(f"— **{climb}**")
+    # Estimation d'un effort type de 15 minutes (900s) par col, pondéré à 92% pour la course
+    t_climb_sec = 900
+    climb_target_w = int((cp + (w_prime / t_climb_sec)) * 0.92)
+    st.markdown(
+        f"— **{climb}** : cible optimale modélisée ~{climb_target_w} W"
+    )
