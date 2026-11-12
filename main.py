@@ -61,6 +61,7 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
+# Gestion de la persistance disque des records
 if "power_records" not in st.session_state:
   st.session_state.power_records = {
       "5s": 1099,
@@ -112,9 +113,11 @@ if csv_file is not None:
           st.session_state.power_records["5min"] = int(watts)
         elif secs == 1200:
           st.session_state.power_records["20min"] = int(watts)
-      st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés")
+      st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés sur disque")
   except Exception as e:
     st.sidebar.error(f"Erreur de lecture du fichier : {e}")
+elif os.path.exists(CACHE_RECORDS_PATH):
+  st.sidebar.info("📁 Records chargés depuis la sauvegarde locale.")
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
@@ -156,7 +159,6 @@ if uploaded_file is not None:
     in_climb = False
 
     for pt in points_data:
-      # On considère qu'on monte si la pente locale est positive
       is_ascending = pt["d_elev"] > 0 or (
           pt["d_dist"] > 0
           and (pt["d_elev"] / max(pt["d_dist"], 0.001)) * 100 >= 0.5
