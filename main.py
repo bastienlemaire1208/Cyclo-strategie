@@ -61,7 +61,6 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
-# Gestion de la persistance disque des records
 if "power_records" not in st.session_state:
   st.session_state.power_records = {
       "5s": 1099,
@@ -121,7 +120,7 @@ elif os.path.exists(CACHE_RECORDS_PATH):
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
-distance_km, elevation_m, detected_climbs = 100.0, 1500.0, []
+distance_km, elevation_m, detected_climbs, flat_sections = 100.0, 1500.0, [], []
 
 if uploaded_file is not None:
   gpx = gpxpy.parse(uploaded_file)
@@ -143,7 +142,7 @@ if uploaded_file is not None:
                   "dist": total_distance / 1000.0,
                   "elev": point.elevation or 0,
                   "d_dist": d / 1000.0,
-                  "d_elev": diff if diff > 0 else 0,
+                  "d_elev": diff,
               }
           )
         prev_point = point
@@ -151,27 +150,32 @@ if uploaded_file is not None:
   distance_km = round(total_distance / 1000, 1)
   elevation_m = round(elevation_gain)
 
-  # Détection stricte : longueur >= 1 km et pente moyenne >= 3%
   if len(points_data) > 20:
     current_dist = 0
     current_elev = 0
     climb_start = 0
     in_climb = False
 
-    for pt in points_data:
-      is_ascending = pt["d_elev"] > 0 or (
-          pt["d_dist"] > 0
-          and (pt["d_elev"] / max(pt["d_dist"], 0.001)) * 100 >= 0.5
-      )
+    flat_dist = 0
+    flat_start = 0
+    in_flat = False
 
+    for pt in points_data:
+      d_dist = pt["d_dist"]
+      d_elev = pt["d_elev"]
+      grad = (d_elev / max(d_dist, 0.0001)) * 100 if d_dist > 0 else 0
+
+      # Détection des côtes (>= 1km, >= 3%)
+      is_ascending = d_elev > 0 or (d_dist > 0 and grad >= 0.5)
       if is_ascending:
         if not in_climb:
           in_climb = True
           climb_start = pt["dist"]
           current_dist = 0
           current_elev = 0
-        current_dist += pt["d_dist"]
-        current_elev += pt["d_elev"]
+        current_dist += d_dist
+        if d_elev > 0:
+          current_elev += d_elev
       else:
         if in_climb:
           if current_dist >= 1.0:
@@ -184,11 +188,27 @@ if uploaded_file is not None:
                           " km)"
                       ),
                       "dist": round(current_dist, 2),
-                      "elev": round(current_elev),
+                      "elev": round(max(current_elev, 0)),
                       "grad": round(avg_grad, 1),
                   }
               )
           in_climb = False
+
+      # Détection des portions plates (hors descentes < -2% et distance > 1km)
+      is_flat_or_rolling = grad >= -2.0
+      if is_flat_or_rolling:
+        if not in_flat:
+          in_flat = True
+          flat_start = pt["dist"]
+          flat_dist = 0
+        flat_dist += d_dist
+      else:
+        if in_flat:
+          if flat_dist >= 1.0:
+            flat_sections.append(
+                {"start": round(flat_start, 1), "dist": round(flat_dist, 1)}
+            )
+          in_flat = False
 
 st.sidebar.header("Paramètres physiologiques")
 ftp = st.sidebar.number_input("FTP (W)", value=fetched_ftp, step=1)
@@ -257,14 +277,55 @@ with col4:
       help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
   )
 
+# Puissance sur les portions plates
+flat_target_w = int(sv1_power * 0.92)
+
+st.subheader("Stratégie sur les portions plates (> 1 km)")
+st.markdown(
+    f"Sur les sections planes et faux-plats (hors descentes prononcées), maintenir"
+    f" une puissance stable de **{flat_target_w} W** (environ 92% du SV1) pour"
+    " préserver l'intégrité musculaire tout en roulant dans le rythme du"
+    " groupe."
+)
+
 if detected_climbs:
-  st.subheader("Côtes et cols répertoriés (Modèle CP / W')")
+  st.subheader("Cols et côtes répertoriés (Modèle CP / W' & Difficulté)")
+
+  # Calcul des scores normalisés 50-50 (Distance & Pente) pour l'attribution des couleurs
+  max_dist = max([c["dist"] for c in detected_climbs]) if detected_climbs else 1
+  max_grad = max([c["grad"] for c in detected_climbs]) if detected_climbs else 1
+
   for climb in detected_climbs:
+    norm_dist = climb["dist"] / max_dist if max_dist > 0 else 0
+    norm_grad = climb["grad"] / max_grad if max_grad > 0 else 0
+    score = 0.5 * norm_dist + 0.5 * norm_grad
+
+    if score > 0.7:
+      color, diff_label = "🔴", "Difficile"
+    elif score > 0.35:
+      color, diff_label = "🟠", "Modérée"
+    else:
+      color, diff_label = "🟢", "Facile"
+
     climb_duration_sec = max(
-        300, int((climb["elev"] / estimated_vam) * 3600)
+        300, int((climb["elev"] / max(estimated_vam, 100)) * 3600)
     )
     climb_target_w = int((cp + (w_prime / climb_duration_sec)) * 0.90)
-    st.markdown(
-        f"**{climb['name']}** : {climb['dist']} km | +{climb['elev']} m D+ |"
-        f" Pente moy. {climb['grad']}% — Cible : **{climb_target_w} W**"
+    climb_vam = (
+        int((climb["elev"] / (climb_duration_sec / 3600)))
+        if climb_duration_sec > 0
+        else estimated_vam
     )
+
+    st.markdown(
+        f"{color} **{climb['name']}** ({diff_label}) : {climb['dist']} km |"
+        f" +{climb['elev']} m D+ | Pente moy. {climb['grad']}% — VAM :"
+        f" **{climb_vam} m/h** | Cible : **{climb_target_w} W**"
+    )
+
+st.subheader("Stratégie Nutritionnelle & Hydratation")
+st.markdown(f"""
+* **Hydratation** : Boire régulièrement par petites gorgées toutes les 10 à 15 minutes (viser ~{water_per_hour_ml} ml/h). Commencer dès la première demi-heure, avant la sensation de soif.
+* **Glucides Liquides (Bidons)** : Apporter 60 à 90 g/h de glucides (mélange maltodextrine/fructose) directement dans les bidons pour assurer un flux énergétique constant sans encombrement gastrique.
+* **Glucides Solides (Barres / Gels)** : À consommer prioritairement sur les **portions plates** et les faux-plats roulants, ou au sommet des cols juste avant la bascule en descente. Évitez de mâcher du solide dans les pourcentages raides (> 6%) où le débit cardiaque et ventilatoire est maximal.
+""")
