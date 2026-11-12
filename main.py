@@ -1,5 +1,6 @@
 import os
 import gpxpy
+import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
@@ -60,6 +61,7 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
+# Gestion de la persistance disque et session pour les records
 if "power_records" not in st.session_state:
   st.session_state.power_records = {
       "5s": 1099,
@@ -114,32 +116,83 @@ if csv_file is not None:
       st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés")
   except Exception as e:
     st.sidebar.error(f"Erreur de lecture du fichier : {e}")
+elif os.path.exists(CACHE_RECORDS_PATH):
+  st.sidebar.info("📁 Meilleurs efforts chargés depuis la dernière sauvegarde.")
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
-distance_km, elevation_m, climbs_info = 100.0, 1500.0, []
+distance_km, elevation_m, detected_climbs = 100.0, 1500.0, []
 
 if uploaded_file is not None:
   gpx = gpxpy.parse(uploaded_file)
   total_distance, elevation_gain = 0, 0
   prev_point = None
+  points_data = []
 
   for track in gpx.tracks:
     for segment in track.segments:
       for point in segment.points:
         if prev_point:
-          total_distance += prev_point.distance_3d(point) or 0
+          d = prev_point.distance_3d(point) or 0
+          total_distance += d
           diff = point.elevation - prev_point.elevation
           if diff > 0:
             elevation_gain += diff
+          points_data.append(
+              {
+                  "dist": total_distance / 1000.0,
+                  "elev": point.elevation or 0,
+                  "d_dist": d,
+                  "d_elev": diff if diff > 0 else 0,
+              }
+          )
         prev_point = point
 
   distance_km = round(total_distance / 1000, 1)
   elevation_m = round(elevation_gain)
 
-  for wpt in gpx.waypoints:
-    if wpt.name:
-      climbs_info.append(wpt.name)
+  if len(points_data) > 10:
+    df_gpx = pd.DataFrame(points_data)
+    df_gpx["elev_smooth"] = df_gpx["elev"].rolling(window=15, center=True).mean()
+
+    in_climb = False
+    climb_start = 0
+    climb_dist = 0
+    climb_elev = 0
+
+    for i in range(10, len(df_gpx)):
+      sub = df_gpx.iloc[i - 10 : i]
+      seg_dist = sub["d_dist"].sum()
+      seg_elev = sub["d_elev"].sum()
+      if seg_dist > 0:
+        grad = (seg_elev / seg_dist) * 100
+        if grad >= 3.0 and not in_climb:
+          in_climb = True
+          climb_start = df_gpx.iloc[i - 10]["dist"]
+          climb_dist = 0
+          climb_elev = 0
+        elif in_climb:
+          climb_dist += sub["d_dist"].iloc[-1]
+          climb_elev += sub["d_elev"].iloc[-1]
+          if grad < 1.5 or i == len(df_gpx) - 1:
+            if climb_dist >= 0.8:
+              avg_grad = (
+                  (climb_elev / (climb_dist * 1000)) * 100
+                  if climb_dist > 0
+                  else 0
+              )
+              detected_climbs.append(
+                  {
+                      "name": (
+                          f"Montée #{len(detected_climbs)+1} "
+                          f"({climb_start:.1f} km)"
+                      ),
+                      "dist": round(climb_dist, 2),
+                      "elev": round(climb_elev),
+                      "grad": round(avg_grad, 1),
+                  }
+              )
+            in_climb = False
 
 st.sidebar.header("Paramètres physiologiques")
 ftp = st.sidebar.number_input("FTP (W)", value=fetched_ftp, step=1)
@@ -163,15 +216,12 @@ p20 = st.session_state.power_records["20min"]
 cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
 
-# Estimation réaliste de la durée basée sur un rendement global modéré en course
 w_kg = cp / weight if weight and weight > 0 else 4.0
 estimated_vam = int(w_kg * 120) + 300
 time_on_flat = (distance - (elevation / 100)) / 28
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
 total_hours = max(1.0, time_on_flat + time_on_climb)
 
-# Ajustement scientifique de la Puissance Normalisée (PN) cible globale :
-# En course, la PN s'articule autour du SV1 et décroît logiquement selon la durée totale estimée
 if total_hours > 4.0:
   target_power = int(sv1_power * 0.90)
 elif total_hours > 2.5:
@@ -212,11 +262,12 @@ with col4:
       help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
   )
 
-if climbs_info:
-  st.subheader("Cols et côtes répertoriés (Modèle CP / W')")
-  for climb in climbs_info:
-    t_climb_sec = 900
-    climb_target_w = int((cp + (w_prime / t_climb_sec)) * 0.90)
+if detected_climbs:
+  st.subheader("Côtes et cols détectés (Modèle CP / W')")
+  for climb in detected_climbs:
+    climb_duration_sec = max(300, int((climb["elev"] / estimated_vam) * 3600))
+    climb_target_w = int((cp + (w_prime / climb_duration_sec)) * 0.90)
     st.markdown(
-        f"— **{climb}** : cible optimale modélisée ~{climb_target_w} W"
+        f"— **{climb['name']}** : {climb['dist']} km | +{climb['elev']} m D+ |"
+        f" Pente moy. {climb['grad']}% — **Cible : ~{climb_target_w} W**"
     )
