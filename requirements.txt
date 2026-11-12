@@ -1,5 +1,7 @@
 streamlit
-pandas
 gpxpy
-request
+pandas
+numpy
+requests
+python-dotenv
 matplotlib
