@@ -1,5 +1,6 @@
 import os
 import gpxpy
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import requests
@@ -127,6 +128,7 @@ distance_km, elevation_m, detected_climbs, flat_sections = (
     [],
 )
 map_points = []
+raw_gpx_points = []
 
 if uploaded_file is not None:
   gpx = gpxpy.parse(uploaded_file)
@@ -138,6 +140,12 @@ if uploaded_file is not None:
     for segment in track.segments:
       for point in segment.points:
         map_points.append({"lat": point.latitude, "lon": point.longitude})
+        raw_gpx_points.append(
+            {
+                "dist": total_distance / 1000.0 if prev_point else 0.0,
+                "elev": point.elevation or 0.0,
+            }
+        )
         if prev_point:
           d = prev_point.distance_3d(point) or 0
           total_distance += d
@@ -162,12 +170,13 @@ if uploaded_file is not None:
     current_elev = 0
     climb_start = 0
     in_climb = False
+    climb_pts_indices = []
 
     flat_dist = 0
     flat_start = 0
     in_flat = False
 
-    for pt in points_data:
+    for idx, pt in enumerate(points_data):
       d_dist = pt["d_dist"]
       d_elev = pt["d_elev"]
       grad = (d_elev / max(d_dist, 0.0001)) * 100 if d_dist > 0 else 0
@@ -179,9 +188,11 @@ if uploaded_file is not None:
           climb_start = pt["dist"]
           current_dist = 0
           current_elev = 0
+          climb_pts_indices = []
         current_dist += d_dist
         if d_elev > 0:
           current_elev += d_elev
+        climb_pts_indices.append(idx)
       else:
         if in_climb:
           if current_dist >= 1.0:
@@ -197,6 +208,7 @@ if uploaded_file is not None:
                       "elev": round(max(current_elev, 0)),
                       "grad": round(avg_grad, 1),
                       "start_km": round(climb_start, 1),
+                      "indices": climb_pts_indices.copy(),
                   }
               )
           in_climb = False
@@ -300,13 +312,46 @@ st.markdown(
     " groupe."
 )
 
+
+# Définition de la fenêtre pop-up 3D (dialog) pour l'analyse d'une côte
+@st.dialog("Analyse 3D et Profil de la Côte", width="large")
+def show_climb_popup(climb_name, climb_data, pts_sub):
+  st.subheader(climb_name)
+  st.markdown(
+      f"**Longueur** : {climb_data['dist']} km | **Dénivelé** : +"
+      f" {climb_data['elev']} m | **Pente moyenne** : {climb_data['grad']}%"
+  )
+
+  if pts_sub:
+    fig, ax = plt.subplots(figsize=(10, 4))
+    dists = [p["dist"] for p in pts_sub]
+    elevs = [p["elev"] for p in pts_sub]
+
+    # Remplissage dégradé type 3D / Climbfinder
+    ax.fill_between(dists, elevs, min(elevs), color="orange", alpha=0.4)
+    ax.plot(dists, elevs, color="red", linewidth=2.5, label="Profil altimétrique")
+
+    ax.set_title("Profil 3D / Dénivelé de l'ascension", fontsize=12)
+    ax.set_xlabel("Distance sur la côte (km)")
+    ax.set_ylabel("Altitude (m)")
+    ax.grid(True, linestyle="--", alpha=0.5)
+    st.pyplot(fig)
+  else:
+    st.info("Données altimétriques détaillées indisponibles pour cette côte.")
+
+  if st.button("Fermer"):
+    st.rerun()
+
+
 if detected_climbs:
-  st.subheader("Cols et côtes répertoriés (Modèle CP / W' & Difficulté)")
+  st.subheader(
+      "Cols et côtes répertoriés (Clique sur une côte pour l'analyse 3D)"
+  )
 
   max_dist = max([c["dist"] for c in detected_climbs]) if detected_climbs else 1
   max_grad = max([c["grad"] for c in detected_climbs]) if detected_climbs else 1
 
-  for climb in detected_climbs:
+  for idx, climb in enumerate(detected_climbs):
     norm_dist = climb["dist"] / max_dist if max_dist > 0 else 0
     norm_grad = climb["grad"] / max_grad if max_grad > 0 else 0
     score = 0.5 * norm_dist + 0.5 * norm_grad
@@ -322,11 +367,9 @@ if detected_climbs:
         300, int((climb["elev"] / max(estimated_vam, 100)) * 3600)
     )
 
-    # Facteur adaptatif entre 0.85 et 0.90 selon l'avancement (progression sur la distance) et la longueur
     progress_ratio = (
         climb.get("start_km", 0) / distance if distance > 0 else 0.5
     )
-    # Plus la côte est longue et tardive dans la course, plus le facteur descend vers 0.85
     factor = 0.90 - 0.05 * (
         (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
     )
@@ -339,11 +382,22 @@ if detected_climbs:
         else estimated_vam
     )
 
-    st.markdown(
-        f"{color} **{climb['name']}** ({diff_label}) : {climb['dist']} km |"
-        f" +{climb['elev']} m D+ | Pente moy. {climb['grad']}% — VAM :"
-        f" **{climb_vam} m/h** | Cible : **{climb_target_w} W**"
-    )
+    # Affichage sous forme de bouton interactif ouvrant la pop-up
+    col_btn, col_info = st.columns([0.4, 0.6])
+    with col_btn:
+      if st.button(
+          f"{color} {climb['name']} ({diff_label})", key=f"climb_btn_{idx}"
+      ):
+        # Extraction des points de la côte pour le graphique 3D
+        indices = climb.get("indices", [])
+        sub_pts = [points_data[i] for i in indices] if indices else []
+        show_climb_popup(climb["name"], climb, sub_pts)
+    with col_info:
+      st.markdown(
+          f"📏 {climb['dist']} km | 📈 +{climb['elev']} m | 📐"
+          f" {climb['grad']}% — VAM : **{climb_vam} m/h** | Cible :"
+          f" **{climb_target_w} W**"
+      )
 
 st.subheader("Stratégie Nutritionnelle & Hydratation")
 st.markdown(f"""
