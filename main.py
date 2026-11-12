@@ -22,43 +22,50 @@ def get_intervals_data():
   weather_temp = 20
   logs = []
 
+  # 1. Récupération du profil global (contient souvent le poids et la FTP de base)
   res_prof = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}", auth=auth)
   if res_prof.status_code == 200:
     data = res_prof.json()
     default_weight = float(
         data.get("weight") or data.get("icu_weight") or default_weight
     )
-    logs.append(f"✅ Poids récupéré : {default_weight} kg")
+    # La FTP globale est souvent stockée ici directement
+    default_ftp = int(data.get("ftp") or default_ftp)
+    logs.append(
+        f"✅ Profil récupéré — Poids : {default_weight} kg | FTP : {default_ftp}"
+        " W"
+    )
   else:
-    logs.append("⚠️ Échec profil, utilisation du poids par défaut.")
+    logs.append(
+        f"⚠️ Échec profil (Code {res_prof.status_code}), valeurs par défaut."
+    )
 
-  res_settings = requests.get(
-      f"{BASE_URL}/athlete/{ATHLETE_ID}/settings", auth=auth
-  )
-  if res_settings.status_code == 200:
-    settings = res_settings.json()
-    sport_settings = settings.get("sportSettings", [])
-    for sport in sport_settings:
-      if sport.get("type") == "Ride":
-        default_ftp = int(sport.get("icu_ftp") or default_ftp)
-        logs.append(f"✅ FTP Cyclisme récupérée : {default_ftp} W")
-        break
-  else:
-    logs.append("⚠️ Échec settings, utilisation de la FTP par défaut.")
-
+  # 2. Récupération des zones de puissance pour extraire SV1 (fin de Zone 2 / début Zone 3)
   res_zones = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}/zones", auth=auth)
   if res_zones.status_code == 200:
-    for zone_set in res_zones.json():
+    zones_data = res_zones.json()
+    found_pwr = False
+    for zone_set in zones_data:
       if zone_set.get("type") == "PWR":
+        found_pwr = True
         intervals = zone_set.get("value", [])
+        # En général, l'index 1 correspond à la zone 2, dont le max est SV1
         if len(intervals) >= 2:
           default_sv1 = int(
               intervals[1].get("max") or int(default_ftp * 0.75)
           )
-          logs.append(f"✅ SV1 récupéré : {default_sv1} W")
+          logs.append(f"✅ SV1 récupéré (Z2 max) : {default_sv1} W")
+        break
+    if not found_pwr:
+      logs.append("⚠️ Zones de puissance 'PWR' non trouvées, calcul auto SV1.")
+      default_sv1 = int(default_ftp * 0.75)
   else:
-    logs.append("⚠️ Échec zones, utilisation du SV1 par défaut.")
+    logs.append(
+        f"⚠️ Échec zones (Code {res_zones.status_code}), SV1 estimé à 75% FTP."
+    )
+    default_sv1 = int(default_ftp * 0.75)
 
+  # 3. Courbe de puissance All-Time
   res_curves = requests.get(
       f"{BASE_URL}/athlete/{ATHLETE_ID}/power-curves?curves=all&type=Ride",
       auth=auth,
@@ -73,7 +80,7 @@ def get_intervals_data():
           f"✅ Courbe de puissance chargée ({len(power_curve)} points)."
       )
   else:
-    logs.append("⚠️ Échec courbe de puissance.")
+    logs.append(f"⚠️ Échec courbe de puissance (Code {res_curves.status_code})")
 
   return default_ftp, default_weight, default_sv1, power_curve, weather_temp, logs
 
