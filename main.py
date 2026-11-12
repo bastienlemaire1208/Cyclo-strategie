@@ -1,7 +1,9 @@
 import os
-from dotenv import load_dotenv
+import gpxpy
+import pandas as pd
 import requests
 import streamlit as st
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -13,79 +15,119 @@ st.title("Planificateur de Course Vélo")
 
 
 @st.cache_data
-def get_athlete_profile():
-  url = f"{BASE_URL}/athlete/{ATHLETE_ID}"
-  response = requests.get(url, auth=("API_KEY", API_KEY))
-  if response.status_code == 200:
-    return response.json()
-  return {}
+def get_intervals_data():
+  auth = ("API_KEY", API_KEY)
+  ftp, weight, z2_upper = 250, 70, 180
+  power_curve = {}
+
+  res_prof = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}", auth=auth)
+  if res_prof.status_code == 200:
+    data = res_prof.json()
+    ftp = data.get("ftp", 250)
+    weight = data.get("weight", 70)
+
+  res_zones = requests.get(f"{BASE_URL}/athlete/{ATHLETE_ID}/zones", auth=auth)
+  if res_zones.status_code == 200:
+    for zone_set in res_zones.json():
+      if zone_set.get("type") == "PWR":
+        intervals = zone_set.get("value", [])
+        if len(intervals) >= 2:
+          z2_upper = intervals[1].get("max", int(ftp * 0.75))
+
+  res_curves = requests.get(
+      f"{BASE_URL}/athlete/{ATHLETE_ID}/power-curves?curves=all&type=Ride",
+      auth=auth,
+  )
+  if res_curves.status_code == 200:
+    curves_data = res_curves.json()
+    if curves_data and isinstance(curves_data, list):
+      secs = curves_data[0].get("secs", [])
+      watts = curves_data[0].get("watts", [])
+      power_curve = dict(zip(secs, watts))
+
+  return ftp, weight, z2_upper, power_curve
 
 
-# Récupération des données athlète (FTP, Poids) si dispo sur Intervals
-athlete_data = get_athlete_profile()
-default_ftp = athlete_data.get("ftp", 250)
-default_weight = athlete_data.get("weight", 70)
+ftp, weight, z2_upper, power_curve = get_intervals_data()
 
-st.sidebar.header("Paramètres de la course")
-distance = st.sidebar.number_input(
-    "Distance (km)", min_value=10, max_value=400, value=100
+uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
+
+distance_km, elevation_m, climbs_info = 100.0, 1500.0, []
+
+if uploaded_file is not None:
+  gpx = gpxpy.parse(uploaded_file)
+  total_distance, elevation_gain = 0, 0
+  prev_point = None
+
+  for track in gpx.tracks:
+    for segment in track.segments:
+      for point in segment.points:
+        if prev_point:
+          total_distance += prev_point.distance_3d(point) or 0
+          diff = point.elevation - prev_point.elevation
+          if diff > 0:
+            elevation_gain += diff
+        prev_point = point
+
+  distance_km = round(total_distance / 1000, 1)
+  elevation_m = round(elevation_gain)
+
+  for wpt in gpx.waypoints:
+    if wpt.name:
+      climbs_info.append(wpt.name)
+
+st.sidebar.header("Paramètres Intervals.icu")
+st.sidebar.write(f"**FTP :** {ftp} W")
+st.sidebar.write(f"**Poids :** {weight} kg")
+st.sidebar.write(f"**Seuil Z2/Z3 :** {z2_upper} W")
+
+st.sidebar.header("Paramètres de course")
+distance = st.sidebar.number_input("Distance (km)", value=distance_km)
+elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
+target_power = st.sidebar.slider(
+    "Puissance cible (W)",
+    min_value=100,
+    max_value=int(ftp * 1.5),
+    value=z2_upper,
 )
-elevation = st.sidebar.number_input(
-    "Dénivelé positif (m D+)", min_value=0, max_value=10000, value=1500
-)
 
-st.sidebar.header("Paramètres physiologiques")
-ftp = st.sidebar.number_input("FTP (Watts)", value=default_ftp)
-weight = st.sidebar.number_input("Poids (kg)", value=default_weight)
-
-# Objectifs de la sortie
-target_intensity = st.sidebar.slider(
-    "Intensité visée (% de la FTP)", min_value=55, max_value=95, value=75
-)
-target_power = int(ftp * (target_intensity / 100))
-
-# Estimation de la vitesse et de la VAM selon la puissance et le poids (W/kg)
 w_kg = target_power / weight
-# Estimation empirique de la VAM basée sur le ratio W/kg
-estimated_vam = int(w_kg * 150) + 400
-# Temps estimé basé sur le plat et la montée
-time_on_flat = (distance - (elevation / 100)) / (
-    25 + (w_kg * 2)
-)  # Vitesse estimée
-time_on_climb = elevation / estimated_vam
-total_hours = time_on_flat + time_on_climb
+estimated_vam = int(w_kg * 140) + 350
+time_on_flat = (distance - (elevation / 100)) / 30
+time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
+total_hours = max(0.5, time_on_flat + time_on_climb)
 
-# Calculs nutritionnels et hydriques
-# Glucides : 60 à 90g par heure selon l'intensité
-carbs_per_hour = 75 if target_intensity > 75 else 60
+carbs_per_hour = 80 if target_power > z2_upper else 60
 total_carbs = int(total_hours * carbs_per_hour)
+total_water_liters = round(total_hours * 0.7, 1)
 
-# Hydratation : 500ml à 800ml par heure selon l'effort
-water_per_hour = 650
-total_water_liters = round((total_hours * water_per_hour) / 1000, 1)
-
-# Affichage du plan
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-  st.metric("Temps estimé", f"{int(total_hours)}h {int((total_hours % 1) * 60)}min")
+  st.metric(
+      "Temps estimé",
+      f"{int(total_hours)}h {int((total_hours % 1) * 60):02d}min",
+  )
 with col2:
   st.metric("Puissance Cible", f"{target_power} W", f"{w_kg:.1f} W/kg")
 with col3:
   st.metric("VAM Estimée", f"{estimated_vam} m/h")
 with col4:
-  st.metric("Intensité", f"{target_intensity}% FTP")
+  st.metric("Ravitaillement", f"{total_carbs} g", f"{total_water_liters} L")
 
-st.subheader("Stratégie de Ravitaillement")
-col_nut1, col_nut2 = st.columns(2)
-with col_nut1:
-  st.markdown(f"**Glucides totaux :** {total_carbs} g")
-  st.markdown(
-      f"— Soit environ **{carbs_per_hour} g/h** (gels, barres ou boissons"
-      " énergétiques)."
-  )
-with col_nut2:
-  st.markdown(f"**Eau totale :** {total_water_liters} L")
-  st.markdown(
-      f"— Soit environ **{water_per_hour} ml/h** (à adapter selon la"
-      " température)."
-  )
+if power_curve:
+  st.subheader("Records de puissance (All-Time Intervals.icu)")
+  p5s = power_curve.get(5, "N/A")
+  p1m = power_curve.get(60, "N/A")
+  p5m = power_curve.get(300, "N/A")
+  p20m = power_curve.get(1200, "N/A")
+
+  rc1, rc2, rc3, rc4 = st.columns(4)
+  rc1.metric("Max 5s", f"{p5s} W" if isinstance(p5s, (int, float)) else p5s)
+  rc2.metric("Max 1min", f"{p1m} W" if isinstance(p1m, (int, float)) else p1m)
+  rc3.metric("Max 5min", f"{p5m} W" if isinstance(p5m, (int, float)) else p5m)
+  rc4.metric("Max 20min", f"{p20m} W" if isinstance(p20m, (int, float)) else p20m)
+
+if climbs_info:
+  st.subheader("Cols et côtes répertoriés (GPX)")
+  for climb in climbs_info:
+    st.markdown(f"— {climb}")
