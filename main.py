@@ -68,17 +68,19 @@ if "power_records" not in st.session_state:
   }
 
 st.sidebar.header("Records de puissance (CSV)")
-csv_file = st.sidebar.file_uploader(
-    "Dépose ton CSV « Meilleurs efforts »", type=["csv"]
-)
+# Suppression du filtre strict type=["csv"] pour éviter que le fichier soit grisé
+csv_file = st.sidebar.file_uploader("Dépose ton CSV « Meilleurs efforts »")
 
 if csv_file is not None:
   try:
-    df_csv = pd.read_csv(csv_file)
-    if "Secs" in df_csv.columns and "Watts" in df_csv.columns:
+    df_csv = pd.read_csv(csv_file, sep=None, engine="python")
+    # Normalisation des noms de colonnes en minuscules pour éviter les erreurs de casse
+    df_csv.columns = [str(col).strip().lower() for col in df_csv.columns]
+
+    if "secs" in df_csv.columns and "watts" in df_csv.columns:
       for _, row in df_csv.iterrows():
-        secs = row["Secs"]
-        watts = row["Watts"]
+        secs = row["secs"]
+        watts = row["watts"]
         if secs == 5:
           st.session_state.power_records["5s"] = int(watts)
         elif secs == 60:
@@ -87,9 +89,13 @@ if csv_file is not None:
           st.session_state.power_records["5min"] = int(watts)
         elif secs == 1200:
           st.session_state.power_records["20min"] = int(watts)
-    st.sidebar.success("✅ Records mis à jour et mémorisés")
-  except Exception:
-    st.sidebar.error("Erreur de lecture du format CSV.")
+      st.sidebar.success("✅ Records mis à jour et mémorisés")
+    else:
+      st.sidebar.warning(
+          "⚠️ Format non reconnu : colonnes 'Secs' et 'Watts' attendues."
+      )
+  except Exception as e:
+    st.sidebar.error(f"Erreur de lecture du fichier : {e}")
 
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
@@ -180,5 +186,5 @@ with col4:
 
 if climbs_info:
   st.subheader("Cols et côtes répertoriés (GPX)")
-  for climb in climbs_info:
+  For climb in climbs_info:
     st.markdown(f"— **{climb}**")
