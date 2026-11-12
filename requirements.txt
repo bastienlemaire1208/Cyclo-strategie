@@ -1,5 +1,5 @@
 streamlit
 pandas
 gpxpy
-requests
-python-dotenv
+request
+matplotlib.pyplot
