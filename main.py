@@ -58,44 +58,6 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
   for log in api_logs:
     st.write(log)
 
-# Gestion de la persistance en mémoire (Session State) pour le CSV des records
-if "power_records" not in st.session_state:
-  # Valeurs par défaut de secours
-  st.session_state.power_records = {
-      "5s": 846,
-      "1min": 588,
-      "5min": 328,
-      "20min": 301,
-  }
-
-st.sidebar.header("Records de puissance (CSV Intervals)")
-csv_file = st.sidebar.file_uploader(
-    "Dépose ton CSV « Meilleurs efforts »", type=["csv"]
-)
-
-if csv_file is not None:
-  try:
-    df_csv = pd.read_csv(csv_file)
-    # Parsing dynamique basé sur le format exporté par Intervals.icu
-    # On cherche les lignes correspondantes aux durées clés si colonnes présentes
-    if "Secs" in df_csv.columns and "Watts" in df_csv.columns:
-      for _, row in df_csv.iterrows():
-        secs = row["Secs"]
-        watts = row["Watts"]
-        if secs == 5:
-          st.session_state.power_records["5s"] = int(watts)
-        elif secs == 60:
-          st.session_state.power_records["1min"] = int(watts)
-        elif secs == 300:
-          st.session_state.power_records["5min"] = int(watts)
-        elif secs == 1200:
-          st.session_state.power_records["20min"] = int(watts)
-    st.sidebar.success("✅ Records mis à jour et gardés en mémoire")
-  except Exception:
-    st.sidebar.error("Erreur de lecture du format CSV.")
-
-power_records = st.session_state.power_records
-
 uploaded_file = st.file_uploader("Dépose ton fichier GPX (Komoot)", type=["gpx"])
 
 distance_km, elevation_m, climbs_info = 100.0, 1500.0, []
@@ -138,12 +100,8 @@ st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
 
-# Modélisation scientifique de la puissance cible globale :
-# Pondération entre le SV1 (base aérobie longue) et la puissance critique/FTP selon la distance et le D+
-# Facteur d'intensité (IF) théorique décroissant avec le volume total
 estimated_duration_hours_rough = (distance / 27) + (elevation / 1000 * 0.4)
 if estimated_duration_hours_rough > 4:
-  # Sur longue distance, la puissance cible globale s'aligne strictement sur ou sous le SV1
   target_power = int(sv1_power * 0.95)
 elif estimated_duration_hours_rough > 2:
   target_power = int(sv1_power)
@@ -187,20 +145,7 @@ with col4:
       help=f"~{water_per_hour_ml} ml/h ({ambient_temp}°C)",
   )
 
-st.subheader("Records de puissance (All-Time Meilleurs efforts)")
-rc1, rc2, rc3, rc4 = st.columns(4)
-rc1.metric("Max 5s", f"{power_records['5s']} W")
-rc2.metric("Max 1min", f"{power_records['1min']} W")
-rc3.metric("Max 5min", f"{power_records['5min']} W")
-rc4.metric("Max 20min", f"{power_records['20min']} W")
-
 if climbs_info:
   st.subheader("Cols et côtes répertoriés (GPX)")
-  st.write(
-      "Puissances conseillées dans les ascensions basées sur les records"
-      " (20 min max sustainable) :"
-  )
   for climb in climbs_info:
-    # Estimation de la puissance dans le col pondérée par le record 20min (facteur 0.88-0.92 pour un effort gérable en course)
-    climb_target_w = int(power_records["20min"] * 0.90)
-    st.markdown(f"— **{climb}** : cible conseillée ~{climb_target_w} W")
+    st.markdown(f"— **{climb}**")
