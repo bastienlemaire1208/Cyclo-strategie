@@ -69,14 +69,18 @@ if "power_records" not in st.session_state:
       "5min": 374,
       "20min": 301,
   }
-  if os.path.exists(CACHE_RECORDS_PATH):
-    try:
-      df_saved = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine="python")
-      df_saved.columns = [str(col).strip().lower() for col in df_saved.columns]
-      if "secs" in df_saved.columns and "watts" in df_saved.columns:
-        for _, row in df_saved.iterrows():
-          secs = row["secs"]
-          watts = row["watts"]
+if "vam_records" not in st.session_state:
+  st.session_state.vam_records = {}
+
+if os.path.exists(CACHE_RECORDS_PATH):
+  try:
+    df_saved = pd.read_csv(CACHE_RECORDS_PATH, sep=None, engine="python")
+    df_saved.columns = [str(col).strip().lower() for col in df_saved.columns]
+    if "secs" in df_saved.columns and "watts" in df_saved.columns:
+      for _, row in df_saved.iterrows():
+        secs = row["secs"]
+        watts = row["watts"]
+        if pd.notna(watts):
           if secs == 5:
             st.session_state.power_records["5s"] = int(watts)
           elif secs == 60:
@@ -85,12 +89,14 @@ if "power_records" not in st.session_state:
             st.session_state.power_records["5min"] = int(watts)
           elif secs == 1200:
             st.session_state.power_records["20min"] = int(watts)
-    except Exception:
-      pass
+        if "vam" in df_saved.columns and pd.notna(row["vam"]):
+          st.session_state.vam_records[int(secs)] = float(row["vam"])
+  except Exception:
+    pass
 
-st.sidebar.header("Records de puissance (CSV)")
+st.sidebar.header("Records de puissance & VAM (CSV)")
 csv_file = st.sidebar.file_uploader(
-    "Dépose ton CSV « Meilleurs efforts » (optionnel)"
+    "Dépose ton CSV « Meilleurs efforts » (secs, watts, vam)"
 )
 
 if csv_file is not None:
@@ -105,15 +111,20 @@ if csv_file is not None:
       for _, row in df_csv.iterrows():
         secs = row["secs"]
         watts = row["watts"]
-        if secs == 5:
-          st.session_state.power_records["5s"] = int(watts)
-        elif secs == 60:
-          st.session_state.power_records["1min"] = int(watts)
-        elif secs == 300:
-          st.session_state.power_records["5min"] = int(watts)
-        elif secs == 1200:
-          st.session_state.power_records["20min"] = int(watts)
-      st.sidebar.success("✅ Nouveaux records enregistrés et mémorisés sur disque")
+        if pd.notna(watts):
+          if secs == 5:
+            st.session_state.power_records["5s"] = int(watts)
+          elif secs == 60:
+            st.session_state.power_records["1min"] = int(watts)
+          elif secs == 300:
+            st.session_state.power_records["5min"] = int(watts)
+          elif secs == 1200:
+            st.session_state.power_records["20min"] = int(watts)
+        if "vam" in df_csv.columns and pd.notna(row["vam"]):
+          st.session_state.vam_records[int(secs)] = float(row["vam"])
+      st.sidebar.success(
+          "✅ Nouveaux records (Watts et VAM) enregistrés sur disque"
+      )
   except Exception as e:
     st.sidebar.error(f"Erreur de lecture du fichier : {e}")
 elif os.path.exists(CACHE_RECORDS_PATH):
@@ -243,7 +254,7 @@ cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
 
 w_kg = cp / weight if weight and weight > 0 else 4.0
-estimated_vam = int(w_kg * 160) + 400
+estimated_vam = int(w_kg * 180) + 300
 time_on_flat = (distance - (elevation / 100)) / 31.0
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
 total_hours = max(1.0, time_on_flat + time_on_climb)
@@ -404,9 +415,20 @@ if detected_climbs:
     else:
       color, diff_label = "🟢", "Facile"
 
-    # Calcul de la VAM réaliste basé sur W/kg et la pente de la côte
-    climb_vam = int((w_kg * 150) + (climb["grad"] * 25) + 350)
-    climb_vam = max(600, min(1200, climb_vam))
+    # Estimation de la VAM en croisant les records VAM du CSV si disponibles, sinon calcul physiologiquement calibré
+    est_duration_rough = int(
+        (climb["elev"] / 900) * 3600
+    )  # estimation grossière en sec
+    if st.session_state.vam_records:
+      # Trouver la durée la plus proche dans les records VAM
+      closest_sec = min(
+          st.session_state.vam_records.keys(),
+          key=lambda x: abs(x - est_duration_rough),
+      )
+      climb_vam = int(st.session_state.vam_records[closest_sec])
+    else:
+      climb_vam = int((w_kg * 140) + (climb["grad"] * 15) + 420)
+      climb_vam = max(550, min(1050, climb_vam))
 
     climb_duration_sec = (
         int((climb["elev"] / climb_vam) * 3600) if climb_vam > 0 else 900
