@@ -308,15 +308,15 @@ st.markdown(
 
 def get_gradient_color(grad):
   if grad < 4:
-    return "#b2df8a"  # Vert (< 4%)
+    return "#b2df8a"
   elif grad < 6:
-    return "#a6cee3"  # Bleu (< 6%)
+    return "#a6cee3"
   elif grad < 8:
-    return "#fb9a99"  # Orange (< 8%)
+    return "#fb9a99"
   elif grad < 10:
-    return "#e31a1c"  # Rouge (< 10%)
+    return "#e31a1c"
   else:
-    return "#6a3d9a"  # Violet/Noir (>= 10%)
+    return "#6a3d9a"
 
 
 @st.dialog("Profil altimétrique segmenté (Style Cols-cyclisme)", width="large")
@@ -333,30 +333,20 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
   if pts_sub and len(pts_sub) > 5:
     fig, ax = plt.subplots(figsize=(11, 4.5))
 
-    # Découpage rigoureux par tranches exactes de 1 km (ou sous-sections de km)
     start_d = pts_sub[0]["dist"]
     end_d = pts_sub[-1]["dist"]
     min_elev = min([p["elev"] for p in pts_sub]) - 10
 
-    # Création d'intervalles kilométriques continus sans aucun espace blanc
-    step = 0.25  # blocs de 250m pour un rendu fluide et précis façon Cols-cyclisme
+    step = 0.2
     curr = start_d
     while curr < end_d:
       nxt = min(curr + step, end_d)
-      # Trouver les points dans cette tranche
       chunk = [p for p in pts_sub if curr <= p["dist"] <= nxt]
       if len(chunk) >= 2:
         x_start = chunk[0]["dist"]
         x_end = chunk[-1]["dist"]
         y_start = chunk[0]["elev"]
         y_end = chunk[-1]["elev"]
-      elif chunk and len(pts_sub) >= 2:
-        # Interpolation simple
-        x_start = curr
-        x_end = nxt
-        # Trouver les points encadrants dans pts_sub
-        y_start = chunk[0]["elev"]
-        y_end = chunk[0]["elev"]
       else:
         curr = nxt
         continue
@@ -368,7 +358,7 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
       )
       bar_color = get_gradient_color(g_chunk)
 
-      # Trapèze plein continu (sans bordure ni espace blanc)
+      # Désactivation de l'anticrénelage pour éliminer totalement les filets blancs inter-blocs
       from matplotlib.patches import Polygon
 
       polygon = Polygon(
@@ -376,17 +366,15 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
           facecolor=bar_color,
           edgecolor=bar_color,
           linewidth=0,
-          alpha=0.95,
+          antialiased=False,
       )
       ax.add_patch(polygon)
 
-      # Texte de la pente au centre du bloc si assez large
-      if d_chunk >= 0.15:
+      if d_chunk >= 0.12:
         mid_x = (x_start + x_end) / 2
-        mid_y = min_elev + 10
         ax.text(
             mid_x,
-            mid_y,
+            min_elev + 10,
             f"{g_chunk:.1f}%",
             ha="center",
             va="bottom",
