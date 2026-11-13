@@ -64,13 +64,18 @@ with st.expander("Logs de validation Intervals.icu", expanded=False):
 
 if "power_records" not in st.session_state:
   st.session_state.power_records = {
-      "5s": 1099,
-      "1min": 614,
       "5min": 374,
+      "12min": 325,
       "20min": 301,
+      "ftp": fetched_ftp,
   }
 if "vam_records" not in st.session_state:
-  st.session_state.vam_records = {}
+  st.session_state.vam_records = {
+      "5min": 1150,
+      "12min": 1050,
+      "20min": 980,
+      "ftp": 900,
+  }
 
 if os.path.exists(CACHE_RECORDS_PATH):
   try:
@@ -81,16 +86,19 @@ if os.path.exists(CACHE_RECORDS_PATH):
         secs = row["secs"]
         watts = row["watts"]
         if pd.notna(watts):
-          if secs == 5:
-            st.session_state.power_records["5s"] = int(watts)
-          elif secs == 60:
-            st.session_state.power_records["1min"] = int(watts)
-          elif secs == 300:
+          if secs == 300:
             st.session_state.power_records["5min"] = int(watts)
+          elif secs == 720:
+            st.session_state.power_records["12min"] = int(watts)
           elif secs == 1200:
             st.session_state.power_records["20min"] = int(watts)
         if "vam" in df_saved.columns and pd.notna(row["vam"]):
-          st.session_state.vam_records[int(secs)] = float(row["vam"])
+          if secs == 300:
+            st.session_state.vam_records["5min"] = float(row["vam"])
+          elif secs == 720:
+            st.session_state.vam_records["12min"] = float(row["vam"])
+          elif secs == 1200:
+            st.session_state.vam_records["20min"] = float(row["vam"])
   except Exception:
     pass
 
@@ -112,18 +120,21 @@ if csv_file is not None:
         secs = row["secs"]
         watts = row["watts"]
         if pd.notna(watts):
-          if secs == 5:
-            st.session_state.power_records["5s"] = int(watts)
-          elif secs == 60:
-            st.session_state.power_records["1min"] = int(watts)
-          elif secs == 300:
+          if secs == 300:
             st.session_state.power_records["5min"] = int(watts)
+          elif secs == 720:
+            st.session_state.power_records["12min"] = int(watts)
           elif secs == 1200:
             st.session_state.power_records["20min"] = int(watts)
         if "vam" in df_csv.columns and pd.notna(row["vam"]):
-          st.session_state.vam_records[int(secs)] = float(row["vam"])
+          if secs == 300:
+            st.session_state.vam_records["5min"] = float(row["vam"])
+          elif secs == 720:
+            st.session_state.vam_records["12min"] = float(row["vam"])
+          elif secs == 1200:
+            st.session_state.vam_records["20min"] = float(row["vam"])
       st.sidebar.success(
-          "✅ Nouveaux records (Watts et VAM) enregistrés sur disque"
+          "✅ Nouveaux records (5m, 12m, 20m, FTP) enregistrés sur disque"
       )
   except Exception as e:
     st.sidebar.error(f"Erreur de lecture du fichier : {e}")
@@ -235,9 +246,19 @@ if uploaded_file is not None:
 st.sidebar.header("Paramètres physiologiques")
 ftp = st.sidebar.number_input("FTP (W)", value=fetched_ftp, step=1)
 weight = st.sidebar.number_input(
-    "Poids (kg)", value=fetched_weight, step=0.1, format="%.1f"
+    "Poids du corps (kg)", value=fetched_weight, step=0.1, format="%.1f"
 )
 sv1_power = st.sidebar.number_input("SV1 (W)", value=fetched_sv1, step=1)
+
+st.sidebar.header("Paramètres matériels & Équipement")
+bike_weight = st.sidebar.number_input(
+    "Poids du vélo (kg)", value=8.0, step=0.1, format="%.1f"
+)
+gear_weight = st.sidebar.number_input(
+    "Équipement, vêtements & bidons (kg)", value=2.0, step=0.1, format="%.1f"
+)
+
+total_system_weight = weight + bike_weight + gear_weight
 
 st.sidebar.header("Météo & Environnement")
 ambient_temp = st.sidebar.slider(
@@ -253,8 +274,8 @@ p20 = st.session_state.power_records["20min"]
 cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
 
-w_kg = cp / weight if weight and weight > 0 else 4.0
-estimated_vam = int(w_kg * 180) + 300
+w_kg_total = cp / total_system_weight if total_system_weight > 0 else 4.0
+estimated_vam = int(st.session_state.vam_records.get("20min", 980) * 0.9)
 time_on_flat = (distance - (elevation / 100)) / 31.0
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
 total_hours = max(1.0, time_on_flat + time_on_climb)
@@ -415,20 +436,38 @@ if detected_climbs:
     else:
       color, diff_label = "🟢", "Facile"
 
-    # Estimation de la VAM en croisant les records VAM du CSV si disponibles, sinon calcul physiologiquement calibré
-    est_duration_rough = int(
-        (climb["elev"] / 900) * 3600
-    )  # estimation grossière en sec
-    if st.session_state.vam_records:
-      # Trouver la durée la plus proche dans les records VAM
-      closest_sec = min(
-          st.session_state.vam_records.keys(),
-          key=lambda x: abs(x - est_duration_rough),
-      )
-      climb_vam = int(st.session_state.vam_records[closest_sec])
+    est_duration_rough = int((climb["elev"] / 900) * 3600)
+
+    v_5 = st.session_state.vam_records.get("5min", 1150)
+    v_12 = st.session_state.vam_records.get("12min", 1050)
+    v_20 = st.session_state.vam_records.get("20min", 980)
+    v_ftp = st.session_state.vam_records.get("ftp", 900)
+
+    progress_ratio = (
+        climb.get("start_km", 0) / distance if distance > 0 else 0.5
+    )
+    vam_factor = 0.90 - 0.05 * (
+        (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
+    )
+    vam_factor = max(0.80, min(0.90, vam_factor))
+
+    if est_duration_rough < 300:
+      raw_vam = v_5
+    elif est_duration_rough <= 720:
+      ratio = (est_duration_rough - 300) / (720 - 300)
+      raw_vam = v_5 * (1 - ratio) + v_12 * ratio
+    elif est_duration_rough <= 1200:
+      ratio = (est_duration_rough - 720) / (1200 - 720)
+      raw_vam = v_12 * (1 - ratio) + v_20 * ratio
     else:
-      climb_vam = int((w_kg * 140) + (climb["grad"] * 15) + 420)
-      climb_vam = max(550, min(1050, climb_vam))
+      ratio = min(1.0, (est_duration_rough - 1200) / 2400)
+      raw_vam = v_20 * (1 - ratio) + v_ftp * ratio
+
+    # Intégration du ratio de masse totale système pour impacter la VAM de manière réaliste
+    mass_ratio_factor = (
+        weight / total_system_weight if total_system_weight > 0 else 1.0
+    )
+    climb_vam = int(raw_vam * vam_factor * mass_ratio_factor)
 
     climb_duration_sec = (
         int((climb["elev"] / climb_vam) * 3600) if climb_vam > 0 else 900
@@ -436,15 +475,29 @@ if detected_climbs:
     climb_duration_min = climb_duration_sec // 60
     climb_duration_sec_rem = climb_duration_sec % 60
 
-    progress_ratio = (
-        climb.get("start_km", 0) / distance if distance > 0 else 0.5
-    )
-    factor = 0.90 - 0.05 * (
+    p_5 = st.session_state.power_records.get("5min", 374)
+    p_12 = st.session_state.power_records.get("12min", 325)
+    p_20 = st.session_state.power_records.get("20min", 301)
+    p_ftp = ftp
+
+    power_factor = 0.90 - 0.05 * (
         (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
     )
-    factor = max(0.85, min(0.90, factor))
+    power_factor = max(0.80, min(0.90, power_factor))
 
-    climb_target_w = int((cp + (w_prime / max(climb_duration_sec, 60))) * factor)
+    if est_duration_rough < 300:
+      raw_power = p_5
+    elif est_duration_rough <= 720:
+      ratio = (est_duration_rough - 300) / (720 - 300)
+      raw_power = p_5 * (1 - ratio) + p_12 * ratio
+    elif est_duration_rough <= 1200:
+      ratio = (est_duration_rough - 720) / (1200 - 720)
+      raw_power = p_12 * (1 - ratio) + p_20 * ratio
+    else:
+      ratio = min(1.0, (est_duration_rough - 1200) / 2400)
+      raw_power = p_20 * (1 - ratio) + p_ftp * ratio
+
+    climb_target_w = int(raw_power * power_factor)
 
     col_btn, col_info = st.columns([0.4, 0.6])
     with col_btn:
