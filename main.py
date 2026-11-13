@@ -334,7 +334,7 @@ flat_target_w = int(sv1_power * 0.90)
 st.subheader("Visualisation du parcours (GPS)")
 if map_points:
   df_map = pd.DataFrame(map_points)
-    st.map(df_map, zoom=10, use_container_width=True)
+  st.map(df_map, zoom=10, use_container_width=True)
 else:
   st.info("📁 Dépose un fichier GPX pour afficher la carte interactive.")
 
