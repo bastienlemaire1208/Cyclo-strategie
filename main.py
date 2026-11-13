@@ -307,21 +307,19 @@ st.markdown(
 
 
 def get_gradient_color(grad):
-  if grad < 3:
-    return "#a6cee3"
+  if grad < 4:
+    return "#b2df8a"  # Vert clair (< 4%)
   elif grad < 6:
-    return "#b2df8a"
+    return "#a6cee3"  # Bleu (< 6%)
   elif grad < 8:
-    return "#33a02c"
+    return "#fb9a99"  # Orange (< 8%)
   elif grad < 10:
-    return "#fb9a99"
-  elif grad < 12:
-    return "#e31a1c"
+    return "#e31a1c"  # Rouge (< 10%)
   else:
-    return "#6a3d9a"
+    return "#6a3d9a"  # Violet/Noir (>= 10%)
 
 
-@st.dialog("Profil altimétrique segmenté (Style Climbfinder)", width="large")
+@st.dialog("Profil altimétrique segmenté (Style Cols-cyclisme)", width="large")
 def show_climb_popup(climb_name, climb_data, pts_sub):
   st.subheader(climb_name)
   dist_val = climb_data["dist"]
@@ -333,44 +331,66 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
   )
 
   if pts_sub and len(pts_sub) > 5:
-    fig, ax = plt.subplots(figsize=(10, 4))
-    n_bars = max(3, int(dist_val * 5))
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    n_bars = max(4, int(dist_val * 6))  # Blocs verticaux type Cols-cyclisme
     chunk_size = max(1, len(pts_sub) // n_bars)
+    min_elev = min([p["elev"] for p in pts_sub])
 
     for i in range(n_bars):
       chunk = pts_sub[i * chunk_size : (i + 1) * chunk_size]
       if not chunk:
         continue
-      sub_dists = [p["dist"] for p in chunk]
-      sub_elevs = [p["elev"] for p in chunk]
+      x_start = chunk[0]["dist"]
+      x_end = chunk[-1]["dist"]
+      if x_end <= x_start:
+        x_end = x_start + 0.02
 
-      d_chunk = sub_dists[-1] - sub_dists[0]
+      sub_elevs = [p["elev"] for p in chunk]
       e_chunk = sub_elevs[-1] - sub_elevs[0]
+      d_chunk = x_end - x_start
       g_chunk = (
           (e_chunk / (d_chunk * 1000)) * 100 if d_chunk > 0 else grad_val
       )
       bar_color = get_gradient_color(g_chunk)
 
+      # Remplissage de trapèzes pleins (colonnes verticales de la base jusqu'au profil)
       ax.fill_between(
-          sub_dists,
-          sub_elevs,
-          min(sub_elevs),
+          [x_start, x_end],
+          [sub_elevs[0], sub_elevs[-1]],
+          min_elev,
           color=bar_color,
-          alpha=0.85,
+          alpha=0.9,
           edgecolor="white",
-          linewidth=0.8,
+          linewidth=1.0,
       )
+
+      # Affichage de la valeur de pente au bas du trapèze
+      if d_chunk > 0.08:
+        mid_x = (x_start + x_end) / 2
+        ax.text(
+            mid_x,
+            min_elev + 5,
+            f"{g_chunk:.1f}%",
+            ha="center",
+            va="bottom",
+            rotation=90,
+            fontsize=8,
+            color="black",
+            fontweight="bold",
+        )
 
     all_dists = [p["dist"] for p in pts_sub]
     all_elevs = [p["elev"] for p in pts_sub]
-    ax.plot(all_dists, all_elevs, color="#333333", linewidth=1.5)
+    ax.plot(all_dists, all_elevs, color="#222222", linewidth=1.5)
 
     ax.set_title(
-        f"Profil en blocs de pente — {climb_name}", fontsize=11, fontweight="bold"
+        f"Profil en colonnes de pente — {climb_name}",
+        fontsize=12,
+        fontweight="bold",
     )
     ax.set_xlabel("Distance sur la côte (km)")
     ax.set_ylabel("Altitude (m)")
-    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.grid(True, linestyle=":", alpha=0.4)
     st.pyplot(fig)
   else:
     st.info("Données altimétriques insuffisantes pour le profil détaillé.")
@@ -435,7 +455,7 @@ if detected_climbs:
 
 st.subheader("Stratégie Nutritionnelle & Hydratation")
 st.markdown(f"""
-* **Hydratation** : Boire régulièrement par petites gorgées toutes les 10 à 15 minutes (viser ~{water_per_hour_ml} ml/h). Commencer dès la première demi-heure, avant la sensation de soif.
-* **Glucides Liquides (Bidons)** : Apporter 60 à 90 g/h de glucides (mélange maltodextrine/fructose) directement dans les bidons pour assurer un flux énergétique constant sans encombrement gastrique.
+* **Hydratation** : Boire ~{water_per_hour_ml} ml/h.
+* **Glucides Liquides (Bidons)** : 60 à 90 g/h de glucides.
 * **Glucides Solides (Barres / Gels)** : À consommer prioritairement sur les **portions plates** et les faux-plats roulants, ou au sommet des cols juste avant la bascule en descente. Évitez de mâcher du solide dans les pourcentages raides (> 6%) où le débit cardiaque et ventilatoire est maximal.
 """)
