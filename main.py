@@ -237,7 +237,7 @@ st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
 
-p5 = st.session_state.power_records["5min"]
+p5 = st.session_state.power_records["5s"]
 p20 = st.session_state.power_records["20min"]
 cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
@@ -330,39 +330,32 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
       f" **Pente moyenne** : {grad_val}%"
   )
 
-  if pts_sub and len(pts_sub) > 5:
+  if pts_sub and len(pts_sub) > 1:
     fig, ax = plt.subplots(figsize=(11, 4.5))
 
+    min_elev = min([p["elev"] for p in pts_sub]) - 10
     start_d = pts_sub[0]["dist"]
     end_d = pts_sub[-1]["dist"]
-    min_elev = min([p["elev"] for p in pts_sub]) - 10
 
-    step = 0.2
-    curr = start_d
-    while curr < end_d:
-      nxt = min(curr + step, end_d)
-      chunk = [p for p in pts_sub if curr <= p["dist"] <= nxt]
-      if len(chunk) >= 2:
-        x_start = chunk[0]["dist"]
-        x_end = chunk[-1]["dist"]
-        y_start = chunk[0]["elev"]
-        y_end = chunk[-1]["elev"]
-      else:
-        curr = nxt
+    from matplotlib.patches import Polygon
+
+    # Remplissage par jonction exacte entre chaque point consécutif du GPX (continuité absolue)
+    for i in range(len(pts_sub) - 1):
+      x0 = pts_sub[i]["dist"]
+      x1 = pts_sub[i + 1]["dist"]
+      y0 = pts_sub[i]["elev"]
+      y1 = pts_sub[i + 1]["elev"]
+
+      if x1 <= x0:
         continue
 
-      d_chunk = x_end - x_start
-      e_chunk = y_end - y_start
-      g_chunk = (
-          (e_chunk / (d_chunk * 1000)) * 100 if d_chunk > 0 else grad_val
-      )
-      bar_color = get_gradient_color(g_chunk)
-
-      # Désactivation de l'anticrénelage pour éliminer totalement les filets blancs inter-blocs
-      from matplotlib.patches import Polygon
+      d_seg = x1 - x0
+      e_seg = y1 - y0
+      g_seg = (e_seg / (d_seg * 1000)) * 100 if d_seg > 0 else 0
+      bar_color = get_gradient_color(g_seg)
 
       polygon = Polygon(
-          [[x_start, min_elev], [x_start, y_start], [x_end, y_end], [x_end, min_elev]],
+          [[x0, min_elev], [x0, y0], [x1, y1], [x1, min_elev]],
           facecolor=bar_color,
           edgecolor=bar_color,
           linewidth=0,
@@ -370,30 +363,14 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
       )
       ax.add_patch(polygon)
 
-      if d_chunk >= 0.12:
-        mid_x = (x_start + x_end) / 2
-        ax.text(
-            mid_x,
-            min_elev + 10,
-            f"{g_chunk:.1f}%",
-            ha="center",
-            va="bottom",
-            rotation=90,
-            fontsize=8,
-            color="black",
-            fontweight="bold",
-        )
-
-      curr = nxt
-
     all_dists = [p["dist"] for p in pts_sub]
     all_elevs = [p["elev"] for p in pts_sub]
-    ax.plot(all_dists, all_elevs, color="#111111", linewidth=1.8)
+    ax.plot(all_dists, all_elevs, color="#111111", linewidth=1.5)
 
     ax.set_xlim(start_d, end_d)
     ax.set_ylim(min_elev, max(all_elevs) + 15)
     ax.set_title(
-        f"Profil en colonnes de pente — {climb_name}",
+        f"Profil en colonnes continues — {climb_name}",
         fontsize=12,
         fontweight="bold",
     )
