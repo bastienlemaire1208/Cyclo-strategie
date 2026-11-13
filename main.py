@@ -308,15 +308,15 @@ st.markdown(
 
 def get_gradient_color(grad):
   if grad < 4:
-    return "#b2df8a"
+    return "#b2df8a"  # Vert (< 4%)
   elif grad < 6:
-    return "#a6cee3"
+    return "#a6cee3"  # Bleu (< 6%)
   elif grad < 8:
-    return "#fb9a99"
+    return "#fb9a99"  # Orange (< 8%)
   elif grad < 10:
-    return "#e31a1c"
+    return "#e31a1c"  # Rouge (< 10%)
   else:
-    return "#6a3d9a"
+    return "#6a3d9a"  # Violet/Noir (>= 10%)
 
 
 @st.dialog("Profil altimétrique segmenté (Style Cols-cyclisme)", width="large")
@@ -332,43 +332,61 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
 
   if pts_sub and len(pts_sub) > 5:
     fig, ax = plt.subplots(figsize=(11, 4.5))
-    n_bars = max(4, int(dist_val * 6))
-    chunk_size = max(1, len(pts_sub) // n_bars)
-    min_elev = min([p["elev"] for p in pts_sub])
 
-    for i in range(n_bars):
-      chunk = pts_sub[i * chunk_size : (i + 1) * chunk_size]
-      if not chunk:
+    # Découpage rigoureux par tranches exactes de 1 km (ou sous-sections de km)
+    start_d = pts_sub[0]["dist"]
+    end_d = pts_sub[-1]["dist"]
+    min_elev = min([p["elev"] for p in pts_sub]) - 10
+
+    # Création d'intervalles kilométriques continus sans aucun espace blanc
+    step = 0.25  # blocs de 250m pour un rendu fluide et précis façon Cols-cyclisme
+    curr = start_d
+    while curr < end_d:
+      nxt = min(curr + step, end_d)
+      # Trouver les points dans cette tranche
+      chunk = [p for p in pts_sub if curr <= p["dist"] <= nxt]
+      if len(chunk) >= 2:
+        x_start = chunk[0]["dist"]
+        x_end = chunk[-1]["dist"]
+        y_start = chunk[0]["elev"]
+        y_end = chunk[-1]["elev"]
+      elif chunk and len(pts_sub) >= 2:
+        # Interpolation simple
+        x_start = curr
+        x_end = nxt
+        # Trouver les points encadrants dans pts_sub
+        y_start = chunk[0]["elev"]
+        y_end = chunk[0]["elev"]
+      else:
+        curr = nxt
         continue
-      x_start = chunk[0]["dist"]
-      x_end = chunk[-1]["dist"]
-      if x_end <= x_start:
-        x_end = x_start + 0.02
 
-      sub_elevs = [p["elev"] for p in chunk]
-      e_chunk = sub_elevs[-1] - sub_elevs[0]
       d_chunk = x_end - x_start
+      e_chunk = y_end - y_start
       g_chunk = (
           (e_chunk / (d_chunk * 1000)) * 100 if d_chunk > 0 else grad_val
       )
       bar_color = get_gradient_color(g_chunk)
 
-      # Suppression des espaces blancs entre les blocs (edgecolor identique à color, linewidth=0)
-      ax.fill_between(
-          [x_start, x_end],
-          [sub_elevs[0], sub_elevs[-1]],
-          min_elev,
-          color=bar_color,
-          alpha=0.9,
+      # Trapèze plein continu (sans bordure ni espace blanc)
+      from matplotlib.patches import Polygon
+
+      polygon = Polygon(
+          [[x_start, min_elev], [x_start, y_start], [x_end, y_end], [x_end, min_elev]],
+          facecolor=bar_color,
           edgecolor=bar_color,
           linewidth=0,
+          alpha=0.95,
       )
+      ax.add_patch(polygon)
 
-      if d_chunk > 0.08:
+      # Texte de la pente au centre du bloc si assez large
+      if d_chunk >= 0.15:
         mid_x = (x_start + x_end) / 2
+        mid_y = min_elev + 10
         ax.text(
             mid_x,
-            min_elev + 5,
+            mid_y,
             f"{g_chunk:.1f}%",
             ha="center",
             va="bottom",
@@ -378,10 +396,14 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
             fontweight="bold",
         )
 
+      curr = nxt
+
     all_dists = [p["dist"] for p in pts_sub]
     all_elevs = [p["elev"] for p in pts_sub]
-    ax.plot(all_dists, all_elevs, color="#222222", linewidth=1.5)
+    ax.plot(all_dists, all_elevs, color="#111111", linewidth=1.8)
 
+    ax.set_xlim(start_d, end_d)
+    ax.set_ylim(min_elev, max(all_elevs) + 15)
     ax.set_title(
         f"Profil en colonnes de pente — {climb_name}",
         fontsize=12,
