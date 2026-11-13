@@ -67,7 +67,13 @@ if "power_records" not in st.session_state:
       "5s": 1099,
       "1min": 614,
       "5min": 374,
+      "10min": 335,
+      "15min": 315,
       "20min": 301,
+      "30min": 275,
+      "45min": 255,
+      "1h": 240,
+      "1h30": 215,
   }
 if "vam_records" not in st.session_state:
   st.session_state.vam_records = {}
@@ -87,8 +93,20 @@ if os.path.exists(CACHE_RECORDS_PATH):
             st.session_state.power_records["1min"] = int(watts)
           elif secs == 300:
             st.session_state.power_records["5min"] = int(watts)
+          elif secs == 600:
+            st.session_state.power_records["10min"] = int(watts)
+          elif secs == 900:
+            st.session_state.power_records["15min"] = int(watts)
           elif secs == 1200:
             st.session_state.power_records["20min"] = int(watts)
+          elif secs == 1800:
+            st.session_state.power_records["30min"] = int(watts)
+          elif secs == 2700:
+            st.session_state.power_records["45min"] = int(watts)
+          elif secs == 3600:
+            st.session_state.power_records["1h"] = int(watts)
+          elif secs == 5400:
+            st.session_state.power_records["1h30"] = int(watts)
         if "vam" in df_saved.columns and pd.notna(row["vam"]):
           st.session_state.vam_records[int(secs)] = float(row["vam"])
   except Exception:
@@ -118,8 +136,20 @@ if csv_file is not None:
             st.session_state.power_records["1min"] = int(watts)
           elif secs == 300:
             st.session_state.power_records["5min"] = int(watts)
+          elif secs == 600:
+            st.session_state.power_records["10min"] = int(watts)
+          elif secs == 900:
+            st.session_state.power_records["15min"] = int(watts)
           elif secs == 1200:
             st.session_state.power_records["20min"] = int(watts)
+          elif secs == 1800:
+            st.session_state.power_records["30min"] = int(watts)
+          elif secs == 2700:
+            st.session_state.power_records["45min"] = int(watts)
+          elif secs == 3600:
+            st.session_state.power_records["1h"] = int(watts)
+          elif secs == 5400:
+            st.session_state.power_records["1h30"] = int(watts)
         if "vam" in df_csv.columns and pd.notna(row["vam"]):
           st.session_state.vam_records[int(secs)] = float(row["vam"])
       st.sidebar.success(
@@ -304,7 +334,7 @@ flat_target_w = int(sv1_power * 0.90)
 st.subheader("Visualisation du parcours (GPS)")
 if map_points:
   df_map = pd.DataFrame(map_points)
-  st.map(df_map, zoom=10, use_container_width=True)
+    st.map(df_map, zoom=10, use_container_width=True)
 else:
   st.info("📁 Dépose un fichier GPX pour afficher la carte interactive.")
 
@@ -415,12 +445,8 @@ if detected_climbs:
     else:
       color, diff_label = "🟢", "Facile"
 
-    # Estimation de la VAM en croisant les records VAM du CSV si disponibles, sinon calcul physiologiquement calibré
-    est_duration_rough = int(
-        (climb["elev"] / 900) * 3600
-    )  # estimation grossière en sec
+    est_duration_rough = int((climb["elev"] / 900) * 3600)
     if st.session_state.vam_records:
-      # Trouver la durée la plus proche dans les records VAM
       closest_sec = min(
           st.session_state.vam_records.keys(),
           key=lambda x: abs(x - est_duration_rough),
