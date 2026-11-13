@@ -308,15 +308,15 @@ st.markdown(
 
 def get_gradient_color(grad):
   if grad < 4:
-    return "#b2df8a"  # Vert clair (< 4%)
+    return "#b2df8a"
   elif grad < 6:
-    return "#a6cee3"  # Bleu (< 6%)
+    return "#a6cee3"
   elif grad < 8:
-    return "#fb9a99"  # Orange (< 8%)
+    return "#fb9a99"
   elif grad < 10:
-    return "#e31a1c"  # Rouge (< 10%)
+    return "#e31a1c"
   else:
-    return "#6a3d9a"  # Violet/Noir (>= 10%)
+    return "#6a3d9a"
 
 
 @st.dialog("Profil altimétrique segmenté (Style Cols-cyclisme)", width="large")
@@ -332,7 +332,7 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
 
   if pts_sub and len(pts_sub) > 5:
     fig, ax = plt.subplots(figsize=(11, 4.5))
-    n_bars = max(4, int(dist_val * 6))  # Blocs verticaux type Cols-cyclisme
+    n_bars = max(4, int(dist_val * 6))
     chunk_size = max(1, len(pts_sub) // n_bars)
     min_elev = min([p["elev"] for p in pts_sub])
 
@@ -353,18 +353,17 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
       )
       bar_color = get_gradient_color(g_chunk)
 
-      # Remplissage de trapèzes pleins (colonnes verticales de la base jusqu'au profil)
+      # Suppression des espaces blancs entre les blocs (edgecolor identique à color, linewidth=0)
       ax.fill_between(
           [x_start, x_end],
           [sub_elevs[0], sub_elevs[-1]],
           min_elev,
           color=bar_color,
           alpha=0.9,
-          edgecolor="white",
-          linewidth=1.0,
+          edgecolor=bar_color,
+          linewidth=0,
       )
 
-      # Affichage de la valeur de pente au bas du trapèze
       if d_chunk > 0.08:
         mid_x = (x_start + x_end) / 2
         ax.text(
