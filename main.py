@@ -446,15 +446,56 @@ if detected_climbs:
       color, diff_label = "🟢", "Facile"
 
     est_duration_rough = int((climb["elev"] / 900) * 3600)
+
+    # Recherche du record VAM le plus proche dans le CSV ou estimation basée sur les records de puissance
+    base_vam = 900
     if st.session_state.vam_records:
       closest_sec = min(
           st.session_state.vam_records.keys(),
           key=lambda x: abs(x - est_duration_rough),
       )
-      climb_vam = int(st.session_state.vam_records[closest_sec])
-    else:
-      climb_vam = int((w_kg * 140) + (climb["grad"] * 15) + 420)
-      climb_vam = max(550, min(1050, climb_vam))
+      base_vam = float(st.session_state.vam_records[closest_sec])
+    elif st.session_state.power_records:
+      closest_p_sec = min(
+          [
+              5,
+              60,
+              300,
+              600,
+              900,
+              1200,
+              1800,
+              2700,
+              3600,
+              5400,
+          ],
+          key=lambda x: abs(x - est_duration_rough),
+      )
+      p_key_map = {
+          5: "5s",
+          60: "1min",
+          300: "5min",
+          600: "10min",
+          900: "15min",
+          1200: "20min",
+          1800: "30min",
+          2700: "45min",
+          3600: "1h",
+          5400: "1h30",
+      }
+      p_val = st.session_state.power_records.get(p_key_map.get(closest_p_sec), 250)
+      base_vam = int((p_val / weight) * 220 + 200)
+
+    # Application d'un facteur d'intensité de course entre 0.85 et 0.90 comme pour la puissance
+    progress_ratio = (
+        climb.get("start_km", 0) / distance if distance > 0 else 0.5
+    )
+    vam_factor = 0.90 - 0.05 * (
+        (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
+    )
+    vam_factor = max(0.85, min(0.90, vam_factor))
+
+    climb_vam = int(base_vam * vam_factor)
 
     climb_duration_sec = (
         int((climb["elev"] / climb_vam) * 3600) if climb_vam > 0 else 900
@@ -462,9 +503,6 @@ if detected_climbs:
     climb_duration_min = climb_duration_sec // 60
     climb_duration_sec_rem = climb_duration_sec % 60
 
-    progress_ratio = (
-        climb.get("start_km", 0) / distance if distance > 0 else 0.5
-    )
     factor = 0.90 - 0.05 * (
         (climb["dist"] / 5.0) * 0.5 + progress_ratio * 0.5
     )
