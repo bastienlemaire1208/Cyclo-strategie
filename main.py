@@ -243,7 +243,7 @@ cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
 w_prime = (p20 - cp) * 1200
 
 w_kg = cp / weight if weight and weight > 0 else 4.0
-estimated_vam = int(w_kg * 220) + 600
+estimated_vam = int(w_kg * 160) + 400
 time_on_flat = (distance - (elevation / 100)) / 31.0
 time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
 total_hours = max(1.0, time_on_flat + time_on_climb)
@@ -404,9 +404,15 @@ if detected_climbs:
     else:
       color, diff_label = "🟢", "Facile"
 
-    climb_duration_sec = max(
-        300, int((climb["elev"] / max(estimated_vam, 100)) * 3600)
+    # Calcul de la VAM réaliste basé sur W/kg et la pente de la côte
+    climb_vam = int((w_kg * 150) + (climb["grad"] * 25) + 350)
+    climb_vam = max(600, min(1200, climb_vam))
+
+    climb_duration_sec = (
+        int((climb["elev"] / climb_vam) * 3600) if climb_vam > 0 else 900
     )
+    climb_duration_min = climb_duration_sec // 60
+    climb_duration_sec_rem = climb_duration_sec % 60
 
     progress_ratio = (
         climb.get("start_km", 0) / distance if distance > 0 else 0.5
@@ -416,12 +422,7 @@ if detected_climbs:
     )
     factor = max(0.85, min(0.90, factor))
 
-    climb_target_w = int((cp + (w_prime / climb_duration_sec)) * factor)
-    climb_vam = (
-        int((climb["elev"] / (climb_duration_sec / 3600)))
-        if climb_duration_sec > 0
-        else estimated_vam
-    )
+    climb_target_w = int((cp + (w_prime / max(climb_duration_sec, 60))) * factor)
 
     col_btn, col_info = st.columns([0.4, 0.6])
     with col_btn:
@@ -434,7 +435,7 @@ if detected_climbs:
     with col_info:
       st.markdown(
           f"📏 {climb['dist']} km | 📈 +{climb['elev']} m | 📐"
-          f" {climb['grad']}% — VAM : **{climb_vam} m/h** | Cible :"
+          f" {climb['grad']}% — VAM : **{climb_vam} m/h** | Temps : **{climb_duration_min} min {climb_duration_sec_rem:02d}s** | Cible :"
           f" **{climb_target_w} W**"
       )
 
