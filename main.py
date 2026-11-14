@@ -365,24 +365,74 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
   if pts_sub and len(pts_sub) > 1:
     fig, ax = plt.subplots(figsize=(11, 4.5))
 
-    min_elev = min([p["elev"] for p in pts_sub]) - 10
+    min_elev = min([p["elev"] for p in pts_sub]) - 15
     start_d = pts_sub[0]["dist"]
     end_d = pts_sub[-1]["dist"]
 
+    total_d = end_d - start_d
+    target_chunk_d = max(0.2, total_d / 10)
+
+    chunks = []
+    c_start_d = pts_sub[0]["dist"]
+    c_start_e = pts_sub[0]["elev"]
+    curr_d = 0.0
+    curr_e_gain = 0.0
+    last_pt = pts_sub[0]
+
+    for pt in pts_sub[1:]:
+      seg_d = pt["dist"] - last_pt["dist"]
+      seg_e = pt["d_elev"]
+      curr_d += seg_d
+      if seg_e > 0:
+        curr_e_gain += seg_e
+      last_pt = pt
+
+      if curr_d >= target_chunk_d:
+        c_end_d = pt["dist"]
+        c_end_e = pt["elev"]
+        g_chunk = (curr_e_gain / (curr_d * 1000)) * 100 if curr_d > 0 else 0
+        chunks.append(
+            {
+                "x0": c_start_d,
+                "x1": c_end_d,
+                "y0": c_start_e,
+                "y1": c_end_e,
+                "grad": g_chunk,
+            }
+        )
+        c_start_d = c_end_d
+        c_start_e = c_end_e
+        curr_d = 0.0
+        curr_e_gain = 0.0
+
+    if (
+        chunks
+        and pts_sub[-1]["dist"] > chunks[-1]["x1"]
+        or not chunks
+        and len(pts_sub) > 1
+    ):
+      c_end_d = pts_sub[-1]["dist"]
+      c_end_e = pts_sub[-1]["elev"]
+      tot_d_rem = c_end_d - c_start_d
+      if tot_d_rem > 0:
+        tot_e_rem = max(0, c_end_e - c_start_e)
+        g_chunk = (tot_e_rem / (tot_d_rem * 1000)) * 100
+        chunks.append(
+            {
+                "x0": c_start_d,
+                "x1": c_end_d,
+                "y0": c_start_e,
+                "y1": c_end_e,
+                "grad": g_chunk,
+            }
+        )
+
     from matplotlib.patches import Polygon
 
-    for i in range(len(pts_sub) - 1):
-      x0 = pts_sub[i]["dist"]
-      x1 = pts_sub[i + 1]["dist"]
-      y0 = pts_sub[i]["elev"]
-      y1 = pts_sub[i + 1]["elev"]
-
-      if x1 <= x0:
-        continue
-
-      d_seg = x1 - x0
-      e_seg = y1 - y0
-      g_seg = (e_seg / (d_seg * 1000)) * 100 if d_seg > 0 else 0
+    for ch in chunks:
+      x0, x1 = ch["x0"], ch["x1"]
+      y0, y1 = ch["y0"], ch["y1"]
+      g_seg = ch["grad"]
       bar_color = get_gradient_color(g_seg)
 
       polygon = Polygon(
@@ -394,12 +444,32 @@ def show_climb_popup(climb_name, climb_data, pts_sub):
       )
       ax.add_patch(polygon)
 
+      if (x1 - x0) >= 0.08:
+        mid_x = (x0 + x1) / 2
+        mid_y = min_elev + (min(y0, y1) - min_elev) * 0.5
+        ax.text(
+            mid_x,
+            mid_y,
+            f"{g_seg:.1f}%",
+            color="#111111",
+            fontsize=9,
+            fontweight="bold",
+            ha="center",
+            va="center",
+            bbox=dict(
+                boxstyle="round,pad=0.2",
+                facecolor="white",
+                alpha=0.75,
+                edgecolor="none",
+            ),
+        )
+
     all_dists = [p["dist"] for p in pts_sub]
     all_elevs = [p["elev"] for p in pts_sub]
     ax.plot(all_dists, all_elevs, color="#111111", linewidth=1.5)
 
     ax.set_xlim(start_d, end_d)
-    ax.set_ylim(min_elev, max(all_elevs) + 15)
+    ax.set_ylim(min_elev, max(all_elevs) + 20)
     ax.set_title(
         f"Profil en colonnes continues — {climb_name}",
         fontsize=12,
@@ -463,7 +533,6 @@ if detected_climbs:
       ratio = min(1.0, (est_duration_rough - 1200) / 2400)
       raw_vam = v_20 * (1 - ratio) + v_ftp * ratio
 
-    # Intégration du ratio de masse totale système pour impacter la VAM de manière réaliste
     mass_ratio_factor = (
         weight / total_system_weight if total_system_weight > 0 else 1.0
     )
