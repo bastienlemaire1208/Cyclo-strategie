@@ -289,18 +289,28 @@ if points_data:
       continue
     d_elev = pt["d_elev"]
     theta = np.arctan(d_elev / d_m) if d_m > 0 else 0.0
+    sin_theta = np.sin(theta)
+    cos_theta = np.cos(theta)
 
-    seg_power = target_power_base * (1.0 + max(0.0, np.sin(theta)) * 0.5)
-
-    v = 8.0
-    for _ in range(5):
-      power_res = (
-          total_system_weight * g * np.sin(theta)
-          + cr * total_system_weight * g * np.cos(theta)
-      ) * v + 0.5 * rho * sc * v**3
-      if power_res > 0:
-        v = v * (seg_power / power_res) ** (1 / 3)
-    v = max(1.5, min(v, 25.0))
+    # Gestion spécifique des descentes en roue libre
+    if d_elev < 0 and (-sin_theta > cr * cos_theta):
+      v = np.sqrt(
+          (-2 * total_system_weight * g * (sin_theta + cr * cos_theta))
+          / (rho * sc)
+      )
+      v = min(v, 16.7)  # Plafond de sécurité à ~60 km/h
+      seg_power = 0.0
+    else:
+      seg_power = target_power_base * (1.0 + max(0.0, sin_theta) * 0.5)
+      v = 8.0
+      for _ in range(5):
+        power_res = (
+            total_system_weight * g * sin_theta
+            + cr * total_system_weight * g * cos_theta
+        ) * v + 0.5 * rho * sc * v**3
+        if power_res > 0:
+          v = v * (seg_power / power_res) ** (1 / 3)
+      v = max(1.5, min(v, 25.0))
 
     seg_time = d_m / v
     total_seconds += seg_time
