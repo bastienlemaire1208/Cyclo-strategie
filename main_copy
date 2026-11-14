@@ -246,16 +246,16 @@ if uploaded_file is not None:
 st.sidebar.header("Paramètres physiologiques")
 ftp = st.sidebar.number_input("FTP (W)", value=fetched_ftp, step=1)
 weight = st.sidebar.number_input(
-    "Poids du corps (kg)", value=fetched_weight, step=0.1, format="%.1f"
+    "Poids du corps (kg)", value=69.0, step=0.1, format="%.1f"
 )
 sv1_power = st.sidebar.number_input("SV1 (W)", value=fetched_sv1, step=1)
 
 st.sidebar.header("Paramètres matériels & Équipement")
 bike_weight = st.sidebar.number_input(
-    "Poids du vélo (kg)", value=8.0, step=0.1, format="%.1f"
+    "Poids du vélo (kg)", value=9.5, step=0.1, format="%.1f"
 )
 gear_weight = st.sidebar.number_input(
-    "Équipement, vêtements & bidons (kg)", value=2.0, step=0.1, format="%.1f"
+    "Équipement, vêtements & bidons (kg)", value=4.0, step=0.1, format="%.1f"
 )
 
 total_system_weight = weight + bike_weight + gear_weight
@@ -269,25 +269,61 @@ st.sidebar.header("Paramètres de course")
 distance = st.sidebar.number_input("Distance (km)", value=distance_km)
 elevation = st.sidebar.number_input("Dénivelé positif (m D+)", value=elevation_m)
 
-p5 = st.session_state.power_records["5min"]
-p20 = st.session_state.power_records["20min"]
-cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
-w_prime = (p20 - cp) * 1200
+# Paramètres physiques pour l'algorithme de mouvement
+cr = 0.004
+rho = 1.225
+sc = 0.35
+g = 9.81
 
-w_kg_total = cp / total_system_weight if total_system_weight > 0 else 4.0
-estimated_vam = int(st.session_state.vam_records.get("20min", 980) * 0.9)
-time_on_flat = (distance - (elevation / 100)) / 31.0
-time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
-total_hours = max(1.0, time_on_flat + time_on_climb)
+target_intensity = 0.80
+target_power_base = int(ftp * target_intensity)
 
-if total_hours > 4.0:
-  target_power = int(sv1_power * 0.90)
-elif total_hours > 2.5:
-  target_power = int(sv1_power * 0.98)
-elif total_hours > 1.5:
-  target_power = int(sv1_power * 1.05)
+total_seconds = 0
+segment_powers = []
+segment_times = []
+
+if points_data:
+  for pt in points_data:
+    d_m = pt["d_dist"] * 1000.0
+    if d_m <= 0:
+      continue
+    d_elev = pt["d_elev"]
+    theta = np.arctan(d_elev / d_m) if d_m > 0 else 0.0
+
+    seg_power = target_power_base * (1.0 + max(0.0, np.sin(theta)) * 0.5)
+
+    v = 8.0
+    for _ in range(5):
+      power_res = (
+          total_system_weight * g * np.sin(theta)
+          + cr * total_system_weight * g * np.cos(theta)
+      ) * v + 0.5 * rho * sc * v**3
+      if power_res > 0:
+        v = v * (seg_power / power_res) ** (1 / 3)
+    v = max(1.5, min(v, 25.0))
+
+    seg_time = d_m / v
+    total_seconds += seg_time
+    segment_powers.append(seg_power)
+    segment_times.append(seg_time)
+
+  total_hours = total_seconds / 3600.0
+
+  if segment_powers and total_seconds > 0:
+    num = sum([(p**4) * t for p, t in zip(segment_powers, segment_times)])
+    target_power = int((num / total_seconds) ** 0.25)
+  else:
+    target_power = target_power_base
 else:
-  target_power = int(cp * 0.95)
+  p5 = st.session_state.power_records["5min"]
+  p20 = st.session_state.power_records["20min"]
+  cp = (p20 * 1200 - p5 * 300) / (1200 - 300)
+
+  estimated_vam = int(st.session_state.vam_records.get("20min", 980) * 0.9)
+  time_on_flat = (distance - (elevation / 100)) / 31.0
+  time_on_climb = elevation / estimated_vam if estimated_vam > 0 else 0
+  total_hours = max(1.0, time_on_flat + time_on_climb)
+  target_power = int(ftp * 0.80)
 
 water_per_hour_ml = int(550 + (ambient_temp - 20) * 25)
 water_per_hour_ml = max(300, water_per_hour_ml)
